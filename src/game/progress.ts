@@ -12,7 +12,7 @@ export function currentQuest(save: SaveData): Quest | null {
 }
 
 /** Feeds landed fish or sales into the active quest's counter. */
-export function questEvent(save: SaveData, ev: { catches?: CaughtFish[]; cast?: CastInfo; sold?: number }) {
+export function questEvent(save: SaveData, ev: { catches?: CaughtFish[]; cast?: CastInfo; sold?: number; realm?: string }) {
   const q = currentQuest(save);
   if (!q) return;
   const g = q.goal;
@@ -43,6 +43,7 @@ export function questStatus(save: SaveData): { value: number; goal: number } {
     case 'dex': return { value: Object.keys(save.dex).length, goal: g.n };
     case 'depth': return { value: Math.floor(save.stats.deepest), goal: g.meters };
     case 'boss': return { value: save.bosses.includes(g.species) ? 1 : 0, goal: 1 };
+    case 'realm': return { value: save.realms.includes(g.realm) ? 1 : 0, goal: 1 };
   }
 }
 
@@ -103,7 +104,7 @@ export function contractColor(c: Contract) {
 }
 
 export function generateContract(save: SaveData, r: () => number, lineLength: number, hooks: number): Contract {
-  const open = ALL_ZONES.filter((z) => z.hull <= save.upgrades.hull);
+  const open = ALL_ZONES.filter((z) => z.hull <= save.upgrades.hull && save.realms.includes(z.realm));
   const top = Math.max(...open.map((z) => z.level));
   const pickable = open.filter((z) => z.level >= top - 2);
   const zone = pickable[Math.floor(r() * pickable.length)];
@@ -205,6 +206,7 @@ export interface Achievement {
 }
 
 const A = (id: string, name: string, desc: string, pearls: number, check: (s: SaveData) => boolean): Achievement => ({ id, name, desc, pearls, check });
+const REALM_BOSSES = new Set(CATCHABLE.filter((sp) => sp.boss && ALL_ZONES.find((z) => z.id === sp.zone)?.realm !== 'blue').map((sp) => sp.id));
 const dexCount = (s: SaveData) => Object.keys(s.dex).length;
 const zoneDone = (s: SaveData, z: ZoneId) => CATCHABLE.filter((f) => f.zone === z && !f.boss && !f.anywhere).every((f) => s.dex[f.id]);
 const maxedTrack = (s: SaveData) => TRACKS.some((t) => s.upgrades[t.id] >= t.tiers.length - 1);
@@ -225,7 +227,7 @@ export const ACHIEVEMENTS: Achievement[] = [
   A('z3', 'Explorer', 'Discover 3 zones.', 2, (s) => s.seenZones.length >= 3),
   A('z6', 'Navigator', 'Discover 6 zones.', 4, (s) => s.seenZones.length >= 6),
   A('z9', 'Voyager', 'Discover 9 zones.', 6, (s) => s.seenZones.length >= 9),
-  A('zall', 'Seen It All', 'Discover every zone.', 15, (s) => s.seenZones.length >= ZONES.length),
+  A('zall', 'Seen It All', 'Discover every zone of the Blue Planet.', 15, (s) => ZONES.every((z) => s.seenZones.includes(z.id))),
   A('void', 'Into the Void', 'Reach The Void.', 10, (s) => s.seenZones.includes('void')),
   A('leg1', 'Legendary!', 'Catch a legendary fish.', 5, (s) => s.stats.legendaries >= 1),
   A('leg5', 'Legend Hunter', 'Catch 5 legendary fish.', 10, (s) => s.stats.legendaries >= 5),
@@ -270,6 +272,23 @@ export const ACHIEVEMENTS: Achievement[] = [
   A('coralall', 'Reef Royalty', 'Log every fish in the Coral Kingdom.', 5, (s) => zoneDone(s, 'coral')),
   A('candyall', 'Sweet Tooth', 'Log every fish in the Candy Lagoon.', 8, (s) => zoneDone(s, 'candy')),
   A('pirateall', 'Pirate King', "Log every fish in the Pirate's Graveyard.", 12, (s) => zoneDone(s, 'pirate')),
+  // portal realms
+  A('rift1', 'Time Traveller', 'Cross the rift into Jurassic Tides.', 20, (s) => s.realms.includes('jurassic')),
+  A('rift2', 'Fel Walker', 'Cross into the Shattered Expanse.', 25, (s) => s.realms.includes('shattered')),
+  A('rift3', 'One Small Cast', 'Cross into Selene.', 30, (s) => s.realms.includes('selene')),
+  A('rift4', 'Totally Radical', 'Cross into the Neon Dimension.', 35, (s) => s.realms.includes('neon')),
+  A('rift5', 'Event Horizon', 'Cross into the Cosmic Maw.', 40, (s) => s.realms.includes('maw')),
+  A('jumps10', 'Rift Regular', 'Travel through a rift 10 times.', 10, (s) => s.stats.realmJumps >= 10),
+  A('nessie', 'I Want To Believe', 'Catch Nessie.', 15, (s) => !!s.dex.nessie),
+  A('megashark', 'Bigger Boat Needed', 'Catch a Cretoxyrhina Rex.', 15, (s) => !!s.dex.cretashark),
+  A('missingno', 'Glitch in the Matrix', 'Catch MissingNo.', 10, (s) => !!s.dex.missingno),
+  A('earthrise', 'Pale Blue Dot', 'Catch the Earthrise Angelfish.', 20, (s) => !!s.dex.earthrise),
+  A('realmboss5', 'Realm Breaker', 'Defeat 5 realm bosses.', 40, (s) => s.bosses.filter((b) => REALM_BOSSES.has(b)).length >= 5),
+  A('realmbossall', 'Multiverse Champion', 'Defeat all 14 realm bosses.', 100, (s) => REALM_BOSSES.size > 0 && [...REALM_BOSSES].every((b) => s.bosses.includes(b))),
+  A('devourer', 'Saviour of the Realms', 'Defeat THE DEVOURER.', 100, (s) => s.bosses.includes('devourer')),
+  A('dex250', 'Encyclopedia Galactica', 'Log 250 species.', 60, (s) => Object.keys(s.dex).length >= 250),
+  A('billion', 'Billionaire Angler', 'Earn $1B in total.', 50, (s) => s.stats.earned >= 1e9),
+  A('trillion', 'Trillionaire?!', 'Earn $1T in total.', 150, (s) => s.stats.earned >= 1e12),
 ];
 
 /** Unlocks and pays out any newly met achievements. */

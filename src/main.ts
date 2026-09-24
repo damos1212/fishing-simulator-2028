@@ -4,7 +4,8 @@ import { loadAssets } from './game/assets';
 import { Game } from './game/game';
 import { loadSave } from './game/save';
 import { UI } from './ui/ui';
-import { buildHeightMap, buildTerrainMesh } from './world/terrain';
+import { setActiveRealm } from './data/zones';
+import { buildHeightMap, buildTerrainMesh, syncRealm } from './world/terrain';
 
 // Yield so the loading bar can paint; falls back to a timer when the tab is hidden (no rAF).
 const nextFrame = () => new Promise<void>((r) => {
@@ -44,7 +45,10 @@ async function main() {
   const t0 = performance.now();
   progress('Filling the ocean...');
   await nextFrame();
-  r.setHeightMap(buildHeightMap(), 800);
+  setActiveRealm(save.realm);
+  syncRealm();
+  const heightmap = buildHeightMap();
+  r.setHeightMap(heightmap, 800);
   worldP = 0.4; progress('Raising islands...');
   await nextFrame();
   const terrain = r.registerMesh(buildTerrainMesh());
@@ -55,7 +59,7 @@ async function main() {
   console.info(`world generated in ${Math.round(performance.now() - t0)}ms`);
   const assets = await assetsPromise;
 
-  game = new Game(r, assets, terrain, ui, save, canvas);
+  game = new Game(r, assets, { terrain, heightmap }, ui, save, canvas);
   const loop = (t: number) => {
     game!.frame(t);
     requestAnimationFrame(loop);

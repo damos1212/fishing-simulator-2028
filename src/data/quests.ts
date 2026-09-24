@@ -1,9 +1,9 @@
 // The story: a chain of quests told by a cast of oddball characters, from the harbor to The Void.
 import type { Rarity } from './fish';
 import type { TrackId } from './upgrades';
-import type { ZoneId } from './zones';
+import type { RealmId, ZoneId } from './zones';
 
-export type NpcId = 'marta' | 'finn' | 'coralia' | 'sludge' | 'barnacle' | 'stranger';
+export type NpcId = 'marta' | 'finn' | 'coralia' | 'sludge' | 'barnacle' | 'stranger' | 'rex' | 'vex' | 'nova' | 'synthia';
 
 export interface Npc { name: string; title: string; face: string; color: string }
 
@@ -14,6 +14,10 @@ export const NPCS: Record<NpcId, Npc> = {
   sludge: { name: 'Dr. Sludge', title: 'Definitely a real doctor', face: '&#129514;', color: '#7ad030' },
   barnacle: { name: 'Captain Barnacle', title: 'Ghost pirate', face: '&#128128;', color: '#50c0a0' },
   stranger: { name: 'The Stranger', title: '???', face: '&#128065;&#65039;', color: '#8a5ad0' },
+  rex: { name: 'Dr. Rex Rexington', title: 'Time-lost chronobiologist', face: '&#129430;', color: '#5ac070' },
+  vex: { name: 'Vex', title: 'Demon hunter, fishes by smell', face: '&#128520;', color: '#70ff40' },
+  nova: { name: 'Commander Nova', title: 'SS Tackle Box, lunar division', face: '&#128105;&#8205;&#128640;', color: '#9ab0e0' },
+  synthia: { name: 'DJ Synthia', title: 'Live from the Neon Dimension', face: '&#127911;', color: '#ff5ab0' },
 };
 
 export type QuestGoal =
@@ -23,7 +27,8 @@ export type QuestGoal =
   | { kind: 'visit'; zone: ZoneId }
   | { kind: 'dex'; n: number }
   | { kind: 'depth'; meters: number }
-  | { kind: 'boss'; species: string };
+  | { kind: 'boss'; species: string }
+  | { kind: 'realm'; realm: RealmId };
 
 export interface Quest {
   id: string;
@@ -33,10 +38,12 @@ export interface Quest {
   intro: string[];
   outro: string[];
   reward: { money: number; pearls: number; cosmetic?: string };
+  /** Screen shown after the outro: a cliffhanger, or the true ending. */
+  after?: 'teaser' | 'finale';
 }
 
-const Q = (id: string, npc: NpcId, title: string, goal: QuestGoal, reward: Quest['reward'], intro: string[], outro: string[]): Quest =>
-  ({ id, npc, title, goal, reward, intro, outro });
+const Q = (id: string, npc: NpcId, title: string, goal: QuestGoal, reward: Quest['reward'], intro: string[], outro: string[], after?: Quest['after']): Quest =>
+  ({ id, npc, title, goal, reward, intro, outro, after });
 
 export const QUESTS: Quest[] = [
   Q('first', 'marta', 'Catch 3 fish', { kind: 'catch', n: 3 }, { money: 50, pearls: 1 },
@@ -110,7 +117,88 @@ export const QUESTS: Quest[] = [
     ['You feel very small. That is normal. Everyone does, here.']),
   Q('final', 'stranger', 'Defeat the World Eater', { kind: 'boss', species: 'worldeater' }, { money: 10000000, pearls: 50, cosmetic: 'pet-alien' },
     ['The World Eater swims in the Void. It has swallowed galaxies. It is swimming towards our sea.', 'Only an angler can stop it. Only you.'],
-    ['...', 'It is over. The humming is gone. The sea is safe.', 'Thank you, angler. You are the Legend of the Sea.']),
+    ['...', 'It is over. The humming is gone. The sea is safe.', 'Thank you, angler. You are the Legend of the Sea.'], 'teaser'),
+
+  // ================================================================ Chapter II: Jurassic Tides
+  Q('rift', 'stranger', 'Buy the Chrono Hull', { kind: 'upgrade', track: 'hull', tier: 10 }, { money: 2000000, pearls: 10 },
+    ['...It is not over.', 'When the World Eater died, it tore a hole in the sky above The Void. A rift.', 'Things are coming through. Old things.',
+      'Buy a Chrono Hull. Sail into the rift. Do not be afraid.'],
+    ['The rift hums like a tuning fork. It knows you now.']),
+  Q('jurassic', 'rex', 'Cross the rift into Jurassic Tides', { kind: 'realm', realm: 'jurassic' }, { money: 1500000, pearls: 8 },
+    ['GREAT SCOTT! A fisher! Dr. Rex Rexington, chronobiologist. I fell through that rift on my lunch break.', "It's been... 66 million years.",
+      'The rift is in The Void, south-east of your harbor. Sail straight into it and meet me on the other side. Bring snacks!'],
+    ["Welcome to the Cretaceous! Don't pet anything. Especially the cute ones."]),
+  Q('primordial', 'rex', 'Catch 10 fish in the Primordial Sea', { kind: 'catch', n: 10, zone: 'jopen' }, { money: 3000000, pearls: 8 },
+    ['These waters are full of species science thinks are extinct. Catch ten for my notes!', 'Oh, and the fish here want fancier bait. Dino Nuggets, specifically.'],
+    ['Ammonites! Trilobites! I could cry. I am crying.']),
+  Q('nessie', 'rex', 'Catch Nessie in Fern Lagoon', { kind: 'catch', n: 1, species: 'nessie' }, { money: 8000000, pearls: 10 },
+    ['Legends say a long-necked beast lives in Fern Lagoon, north-east of base camp.', 'Everyone back home thinks she is in Scotland. Prove them wrong!'],
+    ['NESSIE! She is real! She is beautiful! She is trying to eat my hat!']),
+  Q('rexmax', 'rex', 'Defeat Rex Maximus', { kind: 'boss', species: 'rexmaximus' }, { money: 15000000, pearls: 15 },
+    ['Bad news. The king of Fern Lagoon has noticed us. Rex Maximus.', 'Tiny fins. Enormous jaws. Unlimited anger. Boss Bait works on him too.'],
+    ['You beat a dinosaur. With a fishing rod. I am writing a paper about this.']),
+  Q('chicxulub', 'rex', 'Defeat Chicxulub in the Extinction Crater', { kind: 'boss', species: 'chicxulub' }, { money: 40000000, pearls: 20 },
+    ['The meteor that ends this era is not a meteor. It is a FISH. Chicxulub. It lives in the Extinction Crater.', 'Defeat it and the dinosaurs might just survive!'],
+    ['The sky is clearing! History is... well, history is going to be VERY different.', 'Something else fell through the crater. Another rift. It smells of sulfur.']),
+
+  // ================================================================ Chapter III: The Shattered Expanse
+  Q('shattered', 'vex', 'Cross into the Shattered Expanse', { kind: 'realm', realm: 'shattered' }, { money: 30000000, pearls: 12 },
+    ['*sniff* ... You smell of dinosaurs and ambition. I am Vex. I hunt demons. With a fishing rod.',
+      'The rift in the Extinction Crater leads to my world. What is left of it. You will need a Fel-Warded Hull.'],
+    ['Welcome to the Shattered Expanse. Mind the floating rocks. They mind you.']),
+  Q('pitlord', 'vex', 'Defeat The Pit Lord', { kind: 'boss', species: 'pitlord' }, { money: 60000000, pearls: 15 },
+    ['Beneath Hellfire Shallows a Pit Lord has been chained for ten thousand years. The chains are rusting.', 'Finish what the chains started.'],
+    ['*sniff* ... He smells defeated. Good.']),
+  Q('islandturtle', 'vex', 'Catch an Island Turtle in the Nether Drift', { kind: 'catch', n: 1, species: 'islandturtle' }, { money: 90000000, pearls: 15 },
+    ['In the Nether Drift, turtles carry whole islands on their backs. I want one. For... reasons.'],
+    ['A tiny island with a tiny tree. It is perfect. I will call it Home.']),
+  Q('gatelord', 'vex', 'Defeat the Lord of the Black Gate', { kind: 'boss', species: 'gatelord' }, { money: 250000000, pearls: 25 },
+    ['The Black Gate is opening wider. Something on the other side is pushing. Its herald guards the gate.',
+      'Defeat the Lord of the Black Gate. I will hold your coffee.'],
+    ['It is done. The gate is quiet.', '...but look up. The moon of this world just... moved. Another rift. Beyond the gate.']),
+
+  // ================================================================ Chapter IV: Selene
+  Q('selene', 'nova', 'Cross into Selene', { kind: 'realm', realm: 'selene' }, { money: 200000000, pearls: 15 },
+    ['This is Commander Nova of the SS Tackle Box. We detected a fisher-shaped anomaly passing through the Black Gate.',
+      'Beyond it is Selene: a moon with an ocean. Buy a Vacuum-Sealed Hull and come on up. Gravity is optional.'],
+    ["Welcome to Selene! Jump if you like. Everyone does. Once."]),
+  Q('tranquility', 'nova', 'Catch 12 fish in the Sea of Tranquility', { kind: 'catch', n: 12, zone: 'tranquil' }, { money: 400000000, pearls: 15 },
+    ['Our lander set down in the Sea of Tranquility. We need samples. Twelve of them. For science and for dinner.'],
+    ['Excellent haul! The crew is thrilled. The cook is confused.']),
+  Q('moonkraken', 'nova', 'Defeat the Moon Kraken', { kind: 'boss', species: 'moonkraken' }, { money: 900000000, pearls: 20 },
+    ['Something in Tranquility keeps stealing our landers. It has eight arms and a collection.', 'Get our lander back. Defeat the Moon Kraken!'],
+    ['Lander recovered! Slightly chewed. Totally fine.']),
+  Q('darksidething', 'nova', 'Defeat the Thing on the Dark Side', { kind: 'boss', species: 'darksidething' }, { money: 2000000000, pearls: 25 },
+    ['We have lost contact with our Dark Side relay. The last transmission was just... humming.', 'Go and find out what rises when the Earth sets.'],
+    ['Signal restored. And... we are picking up music. From another rift. Is that... synthwave?']),
+
+  // ================================================================ Chapter V: The Neon Dimension
+  Q('neon', 'synthia', 'Cross into the Neon Dimension', { kind: 'realm', realm: 'neon' }, { money: 1500000000, pearls: 20 },
+    ['YO! DJ Synthia here, broadcasting LIVE from the Neon Dimension!', "Your fishing is totally RAD. Grab a Chrome Chassis and slide through the rift on Selene's Dark Side!"],
+    ['Welcome to the GRID, baby! Everything is purple and it is BEAUTIFUL.']),
+  Q('arcadehaul', 'synthia', 'Catch 15 fish in Arcade Reef', { kind: 'catch', n: 15, zone: 'arcade' }, { money: 3000000000, pearls: 20 },
+    ['Arcade Reef is the high score capital of the grid. Show the leaderboard who is boss. Fifteen fish, go go go!'],
+    ['NEW HIGH SCORE! Enter your initials! ...Three letters only, sorry.']),
+  Q('kongcrab', 'synthia', 'Defeat the Kong Crab', { kind: 'boss', species: 'kongcrab' }, { money: 6000000000, pearls: 25 },
+    ['A giant crab is throwing barrels at my stage! Totally uncool. Take it down!'],
+    ['The crowd goes WILD!']),
+  Q('kernelpanic', 'synthia', 'Defeat KERNEL PANIC', { kind: 'boss', species: 'kernelpanic' }, { money: 12000000000, pearls: 30 },
+    ['Uh oh. The Glitch is spreading. Something called KERNEL PANIC is crashing the whole dimension.', 'Reboot it. With your fishing rod. Please hurry, my mixtape is corrupting.'],
+    ['System restored!', "...wait. The Glitch left a hole in the grid. And through it, there's nothing. Nothing but a mouth."]),
+
+  // ================================================================ Chapter VI: The Cosmic Maw
+  Q('maw', 'stranger', 'Enter the Cosmic Maw', { kind: 'realm', realm: 'maw' }, { money: 10000000000, pearls: 25 },
+    ['You have crossed five worlds.', 'They were all drifting towards the same place. The Maw.', 'It is hungry. It has always been hungry.',
+      'Buy a Gravity Anchor. Sail through the Glitch. Come.'],
+    ['This is the end of the ocean. Look up. It is looking back.']),
+  Q('suneater', 'stranger', 'Defeat the Sun Eater', { kind: 'boss', species: 'suneater' }, { money: 30000000000, pearls: 30 },
+    ['On the Accretion Rim, a creature feeds on dying stars. The Sun Eater.', 'It is the Maw\'s herald. Silence it.'],
+    ['The stars on the rim are shining again.', 'Now there is only one left.']),
+  Q('devourer', 'stranger', 'Defeat THE DEVOURER', { kind: 'boss', species: 'devourer' }, { money: 100000000000, pearls: 100 },
+    ['In the heart of the Maw swims THE DEVOURER.', 'It ate the World Eater\'s ancestors. It ate the old gods. It is about to eat everything you love.',
+      'Get an Event Horizon Hull. Get Boss Bait. Get ready.', 'Only an angler can stop it. It was always going to be you.'],
+    ['...', 'The Maw is closing. The realms are drifting apart again, safe.', 'Every fisher, in every realm, will tell stories about you.',
+      'I was once an angler too, you know. A long time ago.', 'Go home. Marta has coffee on.'], 'finale'),
 ];
 
 export const questById = new Map(QUESTS.map((q) => [q.id, q]));

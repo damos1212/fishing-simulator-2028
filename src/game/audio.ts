@@ -1,5 +1,5 @@
 // All sound is synthesized with WebAudio: ambience, engine, SFX and a tiny zone-aware music sequencer.
-export type Mood = 'sunny' | 'kelp' | 'deep' | 'frost' | 'magma' | 'eerie' | 'void' | 'shop';
+export type Mood = 'sunny' | 'kelp' | 'deep' | 'frost' | 'magma' | 'eerie' | 'void' | 'shop' | 'jungle' | 'fel' | 'moon' | 'synth' | 'cosmic';
 
 interface MoodDef { tempo: number; scale: number[]; chords: number[][]; root: number; lead: OscillatorType; pad: boolean; drums: number; bell: boolean }
 
@@ -12,6 +12,11 @@ const MOODS: Record<Mood, MoodDef> = {
   eerie: { tempo: 60, root: 48, scale: [0, 1, 3, 6, 7, 9, 12], chords: [[0, 3, 6], [1, 4, 7], [-1, 3, 6], [0, 3, 6, 9]], lead: 'sine', pad: true, drums: 0, bell: true },
   void: { tempo: 66, root: 55, scale: [0, 2, 4, 6, 8, 10, 12, 14], chords: [[0, 4, 8], [2, 6, 10], [-2, 2, 6], [4, 8, 12]], lead: 'sine', pad: true, drums: 0, bell: true },
   shop: { tempo: 118, root: 62, scale: [0, 2, 4, 5, 7, 9, 11, 12], chords: [[0, 4, 7], [5, 9, 12], [7, 11, 14], [0, 4, 7]], lead: 'square', pad: false, drums: 1, bell: false },
+  jungle: { tempo: 100, root: 55, scale: [0, 2, 5, 7, 9, 12, 14], chords: [[0, 5, 9], [-3, 2, 5], [2, 7, 10], [0, 5, 9]], lead: 'triangle', pad: false, drums: 1.5, bell: false },
+  fel: { tempo: 96, root: 43, scale: [0, 1, 3, 5, 7, 8, 10, 12], chords: [[0, 3, 7], [1, 5, 8], [-2, 1, 5], [-4, 0, 3]], lead: 'square', pad: true, drums: 1.6, bell: false },
+  moon: { tempo: 70, root: 62, scale: [0, 2, 4, 6, 7, 9, 11, 12], chords: [[0, 4, 7, 11], [2, 6, 9, 13], [-1, 2, 6, 9], [4, 7, 11, 14]], lead: 'sine', pad: true, drums: 0.3, bell: true },
+  synth: { tempo: 112, root: 57, scale: [0, 2, 3, 5, 7, 8, 10, 12], chords: [[0, 3, 7], [-4, 0, 3], [-2, 2, 5], [3, 7, 10]], lead: 'sawtooth', pad: true, drums: 1.3, bell: false },
+  cosmic: { tempo: 56, root: 46, scale: [0, 2, 4, 6, 8, 10, 12], chords: [[0, 4, 8], [2, 6, 10], [-2, 2, 6], [0, 6, 12]], lead: 'sine', pad: true, drums: 0, bell: true },
 };
 
 const mtof = (m: number) => 440 * Math.pow(2, (m - 69) / 12);
@@ -213,6 +218,12 @@ export class GameAudio {
   buy() { [0, 7, 12].forEach((n, i) => this.tone(mtof(76 + n), 0.15, 'square', 0.07, 0, i * 0.06)); this.cash(); }
   deny() { this.tone(200, 0.15, 'square', 0.08); this.tone(150, 0.2, 'square', 0.08, 0, 0.1); }
   whoosh() { this.noise(0.4, 'bandpass', 400, 0.2, 2000, 3); }
+  /** Rift crossing: a rising roar and a shimmering arpeggio. */
+  warp() {
+    this.noise(2.2, 'bandpass', 200, 0.35, 4000, 4);
+    this.tone(55, 2.0, 'sawtooth', 0.12, 440);
+    [0, 5, 7, 12, 17, 19, 24, 29].forEach((n, i) => this.tone(mtof(62 + n), 0.3, 'sine', 0.07, 0, 0.2 + i * 0.12));
+  }
   horn(v = 1) { this.tone(110, 0.8, 'sawtooth', 0.12 * v); this.tone(138.6, 0.8, 'sawtooth', 0.1 * v); }
   zone() { [0, 7, 12, 19].forEach((n, i) => this.tone(mtof(60 + n), 0.5, 'sine', 0.08, 0, i * 0.12)); }
   warn() { this.tone(440, 0.15, 'square', 0.07); this.tone(330, 0.25, 'square', 0.07, 0, 0.16); }

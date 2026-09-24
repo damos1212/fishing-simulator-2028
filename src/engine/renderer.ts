@@ -89,7 +89,7 @@ export class Renderer {
   readonly frame = new FrameState();
   readonly post = {
     time: 0, underwater: 0, bloom: 0.55, exposure: 1, flash: [0, 0, 0, 0], fade: [0, 0, 0, 0], vignette: 0.35, saturation: 1.12, aberration: 0, threshold: 2.2,
-    rays: 0.55, contrast: 0.22, warmth: 0.6, grain: 0.018,
+    rays: 0.55, contrast: 0.22, warmth: 0.6, grain: 0.018, warp: 0,
   };
   width = 1;
   height = 1;
@@ -611,7 +611,7 @@ export class Renderer {
     o[12] = p.vignette; o[13] = p.saturation; o[14] = p.aberration; o[15] = p.threshold;
     o[16] = texelW; o[17] = texelH; o[18] = this.quality.rays ? p.rays * this.sunUV[2] : 0; o[19] = 0;
     o[20] = this.sunUV[0]; o[21] = this.sunUV[1]; o[22] = 1; o[23] = 0;
-    o[24] = p.contrast; o[25] = p.warmth; o[26] = p.grain; o[27] = 0;
+    o[24] = p.contrast; o[25] = p.warmth; o[26] = p.grain; o[27] = p.warp;
     this.device.queue.writeBuffer(slot.buf, 0, o);
   }
 

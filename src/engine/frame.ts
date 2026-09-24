@@ -81,10 +81,15 @@ export class FrameState {
   rays = 0.6;
   realmStyle = 0;
   lowGravity = 0;
+  /** Up to two planets in the sky: direction + angular radius, and tint + style (0 = none). */
+  planetA = [0, 1, 0, 0];
+  planetAColor = [1, 1, 1, 0];
+  planetB = [0, 1, 0, 0];
+  planetBColor = [1, 1, 1, 0];
   /** x, z, age, strength per wake puff */
   wake = new Float32Array(64);
 
-  static readonly FLOATS = 248;
+  static readonly FLOATS = 264;
 
   setCamera(view: Mat4, proj: Mat4, pos: Vec3) {
     this.proj.set(proj);
@@ -128,6 +133,10 @@ export class FrameState {
     v4(172, this.waterAbsorb, this.planar, this.foam, this.waterDetail);
     v4(176, this.cloudBase, this.cloudThickness, this.cloudDensity, this.volumetric);
     v4(180, this.cloudSteps, this.rays, this.realmStyle, this.lowGravity);
-    o.set(this.wake, 184);
+    o.set(this.planetA, 184);
+    o.set(this.planetAColor, 188);
+    o.set(this.planetB, 192);
+    o.set(this.planetBColor, 196);
+    o.set(this.wake, 200);
   }
 }

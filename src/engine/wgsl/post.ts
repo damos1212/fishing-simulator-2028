@@ -100,7 +100,17 @@ fn toSRGB(c: vec3f) -> vec3f {
   let uw = pu.a.y;
   var uv = in.uv;
   uv += vec2f(sin(uv.y * 22.0 + t * 2.1), cos(uv.x * 19.0 + t * 1.7)) * 0.0022 * uw;
-  let ab = pu.b.z;
+  // rift warp: swirl the image around the center and zoom it outwards
+  let warp = pu.grade.w;
+  if (warp > 0.001) {
+    let d = uv - 0.5;
+    let r = length(d);
+    let ang = warp * 2.6 * (1.0 - smoothstep(0.0, 0.75, r));
+    let cs = cos(ang);
+    let sn = sin(ang);
+    uv = 0.5 + vec2f(d.x * cs - d.y * sn, d.x * sn + d.y * cs) * (1.0 - warp * 0.35 * r);
+  }
+  let ab = pu.b.z + warp * 0.02;
   var col: vec3f;
   if (ab > 0.0001) {
     let dir = (uv - 0.5) * ab;
@@ -121,6 +131,12 @@ fn toSRGB(c: vec3f) -> vec3f {
   col = max(mix(vec3f(l), col, pu.b.y), vec3f(0.0));
   let vd = length((in.uv - 0.5) * vec2f(1.0, 0.8));
   col *= 1.0 - pu.b.x * smoothstep(0.35, 0.85, vd);
+  if (warp > 0.001) {
+    let rr = length(in.uv - 0.5);
+    let streak = fract(atan2(in.uv.y - 0.5, in.uv.x - 0.5) * 7.0 + rr * 6.0 - t * 3.0);
+    col += vec3f(0.8, 0.4, 1.2) * smoothstep(0.85, 1.0, streak) * warp * smoothstep(0.1, 0.6, rr) * 0.8;
+    col = mix(col, col * vec3f(1.1, 0.8, 1.3), warp * 0.5);
+  }
   col = mix(col, pu.flash.rgb, pu.flash.a);
   col = mix(col, pu.fade.rgb, pu.fade.a);
   let grain = (fract(sin(dot(in.uv * 1000.0 + vec2f(t * 13.1, t * 7.7), vec2f(12.9898, 78.233))) * 43758.5453) - 0.5) * pu.grade.z;

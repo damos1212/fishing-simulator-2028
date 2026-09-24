@@ -3,11 +3,12 @@ import { ALL_ZONES, type ZoneId } from './zones';
 
 export type Archetype =
   | 'slim' | 'tall' | 'round' | 'eel' | 'shark' | 'ray' | 'jelly' | 'squid' | 'angler' | 'whale' | 'sword' | 'eyeball'
-  | 'crab' | 'lobster' | 'turtle' | 'octopus' | 'seahorse' | 'starfish' | 'serpent' | 'dolphin' | 'boot' | 'bottle' | 'duck';
+  | 'crab' | 'lobster' | 'turtle' | 'octopus' | 'seahorse' | 'starfish' | 'serpent' | 'dolphin' | 'boot' | 'bottle' | 'duck'
+  | 'ammonite' | 'trilobite' | 'plesio' | 'mosasaur' | 'dunkle' | 'anomalo' | 'bonefish' | 'crystalfish' | 'drake' | 'robo' | 'pixel';
 export type Rarity = 'common' | 'uncommon' | 'rare' | 'epic' | 'legendary' | 'boss';
 export type WeatherKind = 'clear' | 'cloudy' | 'rain' | 'storm' | 'fog';
 
-export const PATTERN = { none: 0, stripes: 1, spots: 2, lateral: 3, stars: 4, veins: 5, eyes: 6 } as const;
+export const PATTERN = { none: 0, stripes: 1, spots: 2, lateral: 3, stars: 4, veins: 5, eyes: 6, pixel: 7, cracks: 8 } as const;
 
 export interface Species {
   id: string;
@@ -49,11 +50,13 @@ export interface Species {
 export const ANIM: Record<Archetype, number> = {
   slim: 1, tall: 1, round: 1, shark: 1, sword: 1, angler: 1, eel: 2, whale: 3, ray: 4, jelly: 5, squid: 6, eyeball: 6,
   crab: 9, lobster: 9, turtle: 10, octopus: 6, seahorse: 11, starfish: 12, serpent: 2, dolphin: 3, boot: 0, bottle: 0, duck: 0,
+  ammonite: 6, trilobite: 9, plesio: 13, mosasaur: 1, dunkle: 1, anomalo: 4, bonefish: 1, crystalfish: 1, drake: 2, robo: 1, pixel: 1,
 };
 
 const SPEED: Record<Archetype, number> = {
   slim: 4, tall: 2.8, round: 1.8, eel: 2.2, shark: 5, ray: 2.5, jelly: 0.6, squid: 3.2, angler: 2, whale: 2.5, sword: 6, eyeball: 1.5,
   crab: 1.3, lobster: 1.5, turtle: 1.8, octopus: 2, seahorse: 0.8, starfish: 0.3, serpent: 4.5, dolphin: 6, boot: 0.2, bottle: 0.3, duck: 0.4,
+  ammonite: 1.6, trilobite: 1.1, plesio: 3.5, mosasaur: 5.5, dunkle: 4, anomalo: 2.6, bonefish: 3.4, crystalfish: 3.2, drake: 5, robo: 3, pixel: 3.6,
 };
 const RARITY_VALUE: Record<Rarity, number> = { common: 1, uncommon: 1.8, rare: 4, epic: 9, legendary: 35, boss: 150 };
 const RARITY_WEIGHT: Record<Rarity, number> = { common: 8, uncommon: 4, rare: 1.5, epic: 0.7, legendary: 0.12, boss: 0 };
@@ -67,7 +70,7 @@ interface Opt {
 }
 
 const UPRIGHT: Archetype[] = ['jelly', 'seahorse'];
-const BOTTOM: Archetype[] = ['crab', 'lobster', 'starfish'];
+const BOTTOM: Archetype[] = ['crab', 'lobster', 'starfish', 'trilobite'];
 
 function S(zone: ZoneId, id: string, name: string, model: Archetype, depth: [number, number], size: number,
   colors: [string, string, string], rarity: Rarity, flavor: string, o: Opt = {}): Species {
@@ -274,6 +277,204 @@ export const SPECIES: Species[] = [
   S('void', 'ringhorse', 'Ringed Seahorse', 'seahorse', [100, 2000], 1, ['#e0a060', '#fff0d0', '#a060ff'], 'uncommon', 'Wears Saturn as a hula hoop.', { pattern: P.stars, glow: 0.5 }),
   S('void', 'quasar', 'Quasar Squid', 'squid', [300, 2400], 2.2, ['#ffffff', '#a0e0ff', '#ff70d0'], 'rare', 'Brightest thing for a billion miles.', { glow: 2 }),
   S('void', 'worldeater', 'World Eater', 'whale', [500, 2400], 30, ['#0a0520', '#3a2a8a', '#ff70d0'], 'boss', 'It swallowed a galaxy once. Just a small one.', { glow: 1.0, pattern: P.stars }),
+
+  // ================================================================ REALM II: JURASSIC TIDES
+  // ---------------------------------------------------------------- Primordial Sea (L12)
+  S('jopen', 'ammonite', 'Ammonite', 'ammonite', [5, 120], 0.55, ['#d89a50', '#f5e6c8', '#8a4a2a'], 'common', 'Spiral-shelled and very proud of it.', { pattern: P.stripes, school: 4 }),
+  S('jopen', 'trilobite', 'Trilobite', 'trilobite', [20, 180], 0.45, ['#6a5a48', '#c8b090', '#3a2a1a'], 'common', 'Has been bottom-feeding for 500 million years. Loves it.'),
+  S('jopen', 'coelacanth', 'Coelacanth', 'tall', [40, 180], 1.6, ['#2a4a8a', '#9ab0d0', '#dde6ff'], 'uncommon', 'Scientists said it was extinct. It said nothing.', { pattern: P.spots }),
+  S('jopen', 'ichthyo', 'Ichthyosaur', 'dolphin', [0, 90], 2.8, ['#4a6a8a', '#d8e0e8', '#2a3a5a'], 'rare', 'A dolphin, but make it Jurassic.'),
+  S('jopen', 'protojelly', 'Primordial Jelly', 'jelly', [5, 120], 0.9, ['#b0f0a0', '#80c080', '#e0ffd0'], 'common', 'Older than trees. Still stings.', { glow: 0.5, hazard: 'sting' }),
+  S('jopen', 'helicoprion', 'Helicoprion', 'shark', [30, 180], 2.2, ['#5a6a70', '#d0d8d8', '#3a4448'], 'epic', 'Has a buzz saw for a mouth. Nobody knows why.'),
+  S('jopen', 'xiphactinus', 'Xiphactinus', 'sword', [10, 150], 3.2, ['#6a8aa8', '#e8eef0', '#ffd23a'], 'legendary', 'Swallowed a whole fish once. The fish was also huge.', { pattern: P.lateral }),
+  S('jopen', 'nautilus', 'Glowing Nautilus', 'ammonite', [20, 160], 0.7, ['#e0e0f0', '#ffffff', '#40e0ff'], 'uncommon', 'Lights up the prehistoric night.', { time: 'night', glow: 0.8 }),
+  // ---------------------------------------------------------------- Fern Lagoon (L12)
+  S('fern', 'fernguppy', 'Fern Guppy', 'slim', [0, 40], 0.25, ['#4ac060', '#e0ffd0', '#ffd040'], 'common', 'Photosynthesizes on weekends.', { pattern: P.lateral, school: 7 }),
+  S('fern', 'cycadcarp', 'Cycad Carp', 'round', [5, 60], 0.7, ['#6a8a3a', '#e0e8a0', '#c0a030'], 'common', 'Munches ferns that fall in the water.', { pattern: P.spots }),
+  S('fern', 'lungfish', 'Lungfish', 'eel', [10, 90], 1.4, ['#5a5a3a', '#c0b890', '#3a3a20'], 'uncommon', 'Can breathe air. Chooses not to.'),
+  S('fern', 'raptorfish', 'Raptor Fish', 'shark', [10, 90], 1.2, ['#8a6a3a', '#f0e0c0', '#3a2a1a'], 'uncommon', 'Hunts in packs. Opens doors.', { pattern: P.stripes, school: 3 }),
+  S('fern', 'eurypterid', 'Eurypterid', 'lobster', [10, 90], 1.2, ['#8a4a2a', '#e0c0a0', '#4a2010'], 'uncommon', 'A sea scorpion the size of a surfboard.'),
+  S('fern', 'archelon', 'Archelon', 'turtle', [5, 80], 2.4, ['#4a5a3a', '#c0c8a0', '#2a3a20'], 'rare', 'A turtle the size of a car. Honks like one too.'),
+  S('fern', 'fernray', 'Fernwing Ray', 'ray', [10, 90], 1.6, ['#3a8a5a', '#d0f0d0', '#80ff90'], 'rare', 'Glides between the ferns like a falling leaf.'),
+  S('fern', 'babyplesio', 'Baby Plesiosaur', 'plesio', [0, 70], 2.2, ['#5a8a7a', '#d0e8e0', '#2a5a4a'], 'epic', 'Cute now. Give it ten years.'),
+  S('fern', 'amberjack', 'Amberjack Prime', 'tall', [20, 90], 1.1, ['#ff9a20', '#ffe0a0', '#c06010'], 'epic', 'Carries a mosquito inside. Probably fine.', { glow: 0.2 }),
+  S('fern', 'nessie', 'Nessie', 'plesio', [30, 90], 5.5, ['#3a6a5a', '#a0c0b0', '#1a3a30'], 'legendary', 'Blurry in every photo. Sharp in real life.'),
+  S('fern', 'rexmaximus', 'Rex Maximus', 'mosasaur', [30, 90], 9, ['#4a6a3a', '#d8d0a0', '#ff4020'], 'boss', 'It has tiny fins. It is very, very angry about it.', { pattern: P.stripes }),
+  // ---------------------------------------------------------------- The Tar Pits (L13)
+  S('tarpit', 'tarblob', 'Tar Blob', 'round', [0, 80], 0.5, ['#1a1612', '#4a4030', '#ff9a30'], 'common', 'Sticky. Also sticky.', { school: 5, glow: 0.2 }),
+  S('tarpit', 'tarbones', 'Tar Bones', 'bonefish', [10, 200], 0.8, ['#e8dcc0', '#fff6e0', '#a09070'], 'common', 'It lost its flesh. Kept the attitude.', { school: 4 }),
+  S('tarpit', 'ambereel', 'Amber Eel', 'eel', [20, 260], 1.6, ['#ffa020', '#ffe0a0', '#8a4a00'], 'uncommon', 'Glows like honey. Tastes like regret.', { glow: 0.6 }),
+  S('tarpit', 'sabresalmon', 'Sabre-Tooth Salmon', 'slim', [20, 200], 1.2, ['#8a5a3a', '#f0d0b0', '#e0e0e0'], 'uncommon', 'Fell in the tar pit 10,000 years ago. Still mad.'),
+  S('tarpit', 'woollysun', 'Woolly Sunfish', 'tall', [30, 260], 2.0, ['#6a4a2a', '#c0a080', '#3a2010'], 'rare', 'Fluffy. Somehow.'),
+  S('tarpit', 'tarjelly', 'Tar Jelly', 'jelly', [10, 200], 0.9, ['#2a2018', '#5a4a30', '#ffb040'], 'uncommon', 'Steals your catch and makes it sticky.', { glow: 0.3, hazard: 'thief' }),
+  S('tarpit', 'dunkleosteus', 'Dunkleosteus', 'dunkle', [60, 260], 3.5, ['#5a5a60', '#b0b0b0', '#8a8a90'], 'epic', 'Armored head. Guillotine jaws. Zero chill.'),
+  S('tarpit', 'livingfossil', 'Living Fossil', 'bonefish', [100, 260], 1.4, ['#c8b890', '#fff0d0', '#ffd060'], 'epic', 'Glows at night. Scientists are baffled.', { time: 'night', glow: 0.4 }),
+  S('tarpit', 'tarkraken', 'Tar Pit Kraken', 'octopus', [120, 260], 4, ['#1a1410', '#4a3a2a', '#ff8a20'], 'legendary', 'Pulled a mammoth under once. Wants a sequel.', { glow: 0.3 }),
+  S('tarpit', 'sabreshark', 'The Sabre Shark', 'shark', [80, 260], 10, ['#2a2018', '#8a7050', '#ffb040'], 'boss', 'Sabre teeth, shark body, tar-black soul.', { glow: 0.3 }),
+  // ---------------------------------------------------------------- Extinction Crater (L14)
+  S('crater', 'meteorminnow', 'Meteor Minnow', 'slim', [0, 200], 0.35, ['#ff6a20', '#ffd0a0', '#ffff60'], 'common', 'Fell from space. Stayed for the fishing.', { school: 6, glow: 0.5 }),
+  S('crater', 'horseshoe', 'Magma Horseshoe Crab', 'crab', [50, 900], 0.7, ['#6a2a1a', '#e0a080', '#ff6010'], 'common', 'Four hundred million years old. Still hot.', { glow: 0.3 }),
+  S('crater', 'anomalocaris', 'Anomalocaris', 'anomalo', [40, 700], 1.8, ['#c04a3a', '#f0c0a0', '#ffd040'], 'uncommon', 'Weird shrimp. Great grip.'),
+  S('crater', 'ashray', 'Ash Ray', 'ray', [100, 900], 2.4, ['#3a3030', '#8a7a70', '#ff5010'], 'uncommon', 'Glides through falling ash.', { glow: 0.3 }),
+  S('crater', 'mosasaur', 'Mosasaur', 'mosasaur', [20, 600], 6, ['#3a5a4a', '#c0d0c0', '#1a2a20'], 'rare', 'The real apex predator of the Cretaceous.'),
+  S('crater', 'impactgrouper', 'Impact Grouper', 'round', [200, 1200], 2.2, ['#8a3a2a', '#e0a080', '#ffb040'], 'rare', 'Survived the meteor. Absorbed the meteor.', { pattern: P.cracks, glow: 0.3 }),
+  S('crater', 'tektite', 'Tektite Eel', 'eel', [300, 1400], 2.5, ['#1a2a1a', '#6a8a6a', '#80ff60'], 'epic', 'Made of glass from the impact. Handle with care.', { glow: 0.7 }),
+  S('crater', 'cretashark', 'Cretoxyrhina Rex', 'shark', [100, 1200], 14, ['#5a6a70', '#e0e4e8', '#3a4448'], 'legendary', 'The biggest shark ever. Ever ever.'),
+  S('crater', 'lastdino', 'The Last Dinosaur', 'plesio', [200, 1400], 7, ['#6a4a3a', '#e0c0a0', '#ff8030'], 'legendary', 'It refused to go extinct. Respect.', { time: 'night', glow: 0.2 }),
+  S('crater', 'chicxulub', 'Chicxulub', 'whale', [300, 1400], 22, ['#3a1a10', '#aa5a30', '#ff6010'], 'boss', 'The meteor that killed the dinosaurs? It had a passenger.', { pattern: P.cracks, glow: 0.6 }),
+
+  // ================================================================ REALM III: THE SHATTERED EXPANSE
+  // ---------------------------------------------------------------- The Twisting Nether (L15)
+  S('sopen', 'felfry', 'Fel Fry', 'slim', [0, 120], 0.3, ['#60ff40', '#d0ffc0', '#205010'], 'common', 'Tiny, green and full of bad ideas.', { school: 7, glow: 0.6 }),
+  S('sopen', 'netherjelly', 'Nether Jelly', 'jelly', [10, 300], 1.0, ['#8a4aff', '#c0a0ff', '#ff70ff'], 'common', 'Stings in two dimensions at once.', { glow: 0.7, hazard: 'sting' }),
+  S('sopen', 'shardsnapper', 'Shard Snapper', 'crystalfish', [20, 300], 0.8, ['#a060ff', '#e0c0ff', '#60ffa0'], 'common', 'Chipped off a broken world.', { glow: 0.3 }),
+  S('sopen', 'netherling', 'Netherling', 'eyeball', [30, 400], 1.0, ['#3a1a5a', '#a080c0', '#60ff40'], 'uncommon', 'It watches. It judges.', { pattern: P.eyes }),
+  S('sopen', 'riftray', 'Rift Ray', 'ray', [40, 400], 2.6, ['#2a1a4a', '#8a6ac0', '#60ff80'], 'rare', 'Swims through tears in reality.', { glow: 0.5, pattern: P.stars }),
+  S('sopen', 'felserpent', 'Fel Serpent', 'drake', [60, 400], 4.5, ['#1a3a1a', '#60a060', '#80ff40'], 'epic', 'Wings, fangs and fire. Why is it in the water?', { glow: 0.5 }),
+  S('sopen', 'worldshard', 'World Fragment', 'crystalfish', [200, 400], 1.6, ['#40ffa0', '#e0fff0', '#ffffff'], 'legendary', 'A piece of the old world. Still humming.', { glow: 1.0 }),
+  // ---------------------------------------------------------------- Hellfire Shallows (L15)
+  S('hellfire', 'impfish', 'Imp Fish', 'slim', [0, 60], 0.3, ['#c03a1a', '#ffb080', '#60ff30'], 'common', 'Giggles. Constantly.', { school: 6 }),
+  S('hellfire', 'brimcrab', 'Brimstone Crab', 'crab', [20, 150], 0.6, ['#8a2a10', '#ffa060', '#60ff30'], 'common', 'Smells of sulfur. Proudly.', { glow: 0.3 }),
+  S('hellfire', 'hellpike', 'Hellhound Pike', 'sword', [10, 150], 1.4, ['#6a1a0a', '#e08060', '#70ff40'], 'uncommon', 'Fetches. Burns what it fetches.', { pattern: P.cracks, glow: 0.4 }),
+  S('hellfire', 'infernal', 'Infernal Grouper', 'round', [30, 150], 1.6, ['#aa3a1a', '#ffc080', '#ff6010'], 'uncommon', 'It swam out of a volcano. On purpose.', { pattern: P.cracks, glow: 0.5 }),
+  S('hellfire', 'emberhorse', 'Ember Seahorse', 'seahorse', [0, 80], 0.4, ['#ff6a20', '#ffd0a0', '#ffff60'], 'uncommon', 'A little flame that swims.', { time: 'night', glow: 0.8 }),
+  S('hellfire', 'pitsiren', 'Siren of the Pit', 'seahorse', [10, 120], 0.8, ['#ff4a8a', '#ffc0e0', '#70ff40'], 'rare', 'Sings beautifully. Bites harder.', { glow: 0.4 }),
+  S('hellfire', 'felmanta', 'Fel Manta', 'ray', [20, 150], 2.8, ['#2a0a0a', '#c04020', '#70ff40'], 'rare', 'Has wings. Uses them to swim. Why not.'),
+  S('hellfire', 'pitpup', 'Pit Lord Pup', 'dunkle', [40, 150], 2.4, ['#4a1a10', '#c06040', '#60ff30'], 'epic', "The pit lord's pet. It's a good boy.", { glow: 0.3 }),
+  S('hellfire', 'doomgill', 'Doomgill', 'shark', [30, 150], 3.4, ['#3a0a0a', '#a03020', '#80ff40'], 'legendary', 'Guards the fire. Eats the unworthy.', { pattern: P.cracks, glow: 0.6 }),
+  S('hellfire', 'pitlord', 'The Pit Lord', 'dunkle', [60, 150], 11, ['#3a0a05', '#c04020', '#70ff30'], 'boss', 'Chained beneath the shallows for ten thousand years. Hungry.', { pattern: P.cracks, glow: 0.8 }),
+  // ---------------------------------------------------------------- The Nether Drift (L16)
+  S('nether', 'skyfish', 'Drifting Skyfish', 'slim', [0, 200], 0.4, ['#6ab0ff', '#e0f0ff', '#ffffff'], 'common', "Swims in the sky and the sea. Can't decide.", { school: 6 }),
+  S('nether', 'warpeel', 'Warp Eel', 'eel', [30, 600], 2.0, ['#3a2a8a', '#a0a0ff', '#40e0ff'], 'uncommon', 'Teleports randomly. Mostly into your net.', { glow: 0.5 }),
+  S('nether', 'aurorajelly', 'Aurora Jelly', 'jelly', [10, 400], 1.2, ['#40ffc0', '#a0fff0', '#ff80ff'], 'uncommon', 'Glows every color of the aurora.', { glow: 0.9 }),
+  S('nether', 'voidwalker', 'Voidwalker', 'octopus', [100, 900], 2.5, ['#1a1a4a', '#6a6ab0', '#a0e0ff'], 'rare', 'Walks between worlds. Swims too.', { glow: 0.4, pattern: P.stars }),
+  S('nether', 'etherray', 'Ether Ray', 'ray', [50, 700], 3, ['#8ab0ff', '#ffffff', '#ffd0ff'], 'rare', 'Made of starlight and bad decisions.', { glow: 0.6 }),
+  S('nether', 'manawyrm', 'Mana Wyrm', 'drake', [100, 1000], 3.8, ['#3a60ff', '#c0d0ff', '#ff60ff'], 'epic', 'Feeds on magic. Your bait is magic now.', { glow: 0.8 }),
+  S('nether', 'islandturtle', 'Island Turtle', 'turtle', [0, 500], 8, ['#5a5a4a', '#a0a080', '#40ff80'], 'epic', 'There is a tiny island on its back. With a tiny tree.'),
+  S('nether', 'netherdragon', 'Nether Dragon', 'drake', [300, 1100], 9, ['#1a0a3a', '#8a60c0', '#60ffa0'], 'legendary', 'Once burned a world. Now it just wants a nap.', { glow: 0.8 }),
+  S('nether', 'netherwyrm', 'The Nether Wyrm', 'drake', [300, 1100], 18, ['#0a0a30', '#6a40c0', '#40ffc0'], 'boss', 'Coils around the floating islands. Sometimes it eats one.', { glow: 1.0, pattern: P.stars }),
+  // ---------------------------------------------------------------- The Black Gate (L17)
+  S('blackgate', 'gateminnow', 'Gatekeeper Minnow', 'slim', [0, 300], 0.35, ['#1a2a1a', '#6a8a6a', '#80ff40'], 'common', 'Checks your ticket. You do not have a ticket.', { school: 6, glow: 0.4 }),
+  S('blackgate', 'skullfish', 'Skull Fish', 'bonefish', [50, 1200], 0.9, ['#d0d0c0', '#ffffff', '#60ff40'], 'common', 'Huge death metal fan.', { glow: 0.3 }),
+  S('blackgate', 'felguard', 'Felguard Grouper', 'round', [100, 1500], 2, ['#2a3a1a', '#8aa060', '#80ff40'], 'uncommon', 'Stands guard. Floats guard, technically.', { pattern: P.cracks, glow: 0.5 }),
+  S('blackgate', 'doomjelly', 'Doom Jelly', 'jelly', [50, 1500], 1.4, ['#40ff40', '#a0ffa0', '#000000'], 'common', 'Doom, but squishy.', { glow: 1, hazard: 'sting' }),
+  S('blackgate', 'demonray', 'Demon Ray', 'ray', [200, 1800], 3.2, ['#1a0a0a', '#6a2a2a', '#80ff40'], 'rare', 'Horns on a ray. Unfair, frankly.', { glow: 0.5 }),
+  S('blackgate', 'annihilan', 'Annihilan Shark', 'shark', [300, 2000], 5, ['#2a1a0a', '#8a6a4a', '#80ff40'], 'rare', 'Annihilates. It is right there in the name.', { pattern: P.cracks, glow: 0.6 }),
+  S('blackgate', 'gateeye', 'Eye of the Gate', 'eyeball', [500, 2100], 2, ['#0a0a0a', '#3a3a3a', '#80ff40'], 'epic', 'It opened. It saw you.', { pattern: P.eyes, glow: 0.9 }),
+  S('blackgate', 'legion', 'Legion Serpent', 'serpent', [600, 2100], 12, ['#1a2a0a', '#5a8a3a', '#a0ff40'], 'legendary', 'There are many of it. All of it is hungry.', { glow: 0.7 }),
+  S('blackgate', 'gatelord', 'Lord of the Black Gate', 'dunkle', [600, 2100], 16, ['#0a0a05', '#3a4a2a', '#80ff30'], 'boss', 'It opened the gate. It would like to close it on you.', { pattern: P.cracks, glow: 1.0 }),
+
+  // ================================================================ REALM IV: SELENE
+  // ---------------------------------------------------------------- Mare Serenitatis (L18)
+  S('lopen', 'moonfish', 'Moonfish', 'round', [0, 200], 0.6, ['#d0d0e0', '#ffffff', '#a0b0ff'], 'common', 'Waxes and wanes.', { school: 5 }),
+  S('lopen', 'cheesepuffer', 'Cheese Puffer', 'round', [10, 300], 0.5, ['#ffe070', '#fff4c0', '#ffb020'], 'common', 'The moon IS made of cheese. This proves it.', { pattern: P.spots }),
+  S('lopen', 'astrojelly', 'Astro Jelly', 'jelly', [0, 400], 1, ['#a0c0ff', '#e0f0ff', '#ffffff'], 'uncommon', 'Floats right out of the water in low gravity.', { glow: 0.7 }),
+  S('lopen', 'lunarray', 'Lunar Ray', 'ray', [50, 500], 3, ['#b0b8c8', '#ffffff', '#80c0ff'], 'uncommon', 'Glides in slow motion. Everything does here.'),
+  S('lopen', 'regolith', 'Regolith Crab', 'crab', [20, 500], 0.7, ['#8a8a90', '#d0d0d8', '#40c0ff'], 'common', 'Made of moon dust and determination.'),
+  S('lopen', 'selenite', 'Selenite Fish', 'crystalfish', [100, 700], 1.2, ['#e0f0ff', '#ffffff', '#a0e0ff'], 'rare', 'Pure crystal. Rings like a bell.', { glow: 0.5 }),
+  S('lopen', 'lunarwhale', 'Lunar Whale', 'whale', [0, 500], 16, ['#2a3a6a', '#a0b0e0', '#ffffff'], 'epic', 'Swims between the moon and the stars.', { pattern: P.stars, glow: 0.3 }),
+  S('lopen', 'earthrise', 'Earthrise Angelfish', 'tall', [30, 400], 0.9, ['#3a86ff', '#ffffff', '#40c060'], 'legendary', 'Carries a tiny map of Earth on its side.'),
+  // ---------------------------------------------------------------- Sea of Tranquility (L18)
+  S('tranquil', 'apollo', 'Apollo Anchovy', 'slim', [0, 120], 0.3, ['#c0c8d0', '#ffffff', '#ff3030'], 'common', 'One small fish, one giant school.', { pattern: P.stripes, school: 8 }),
+  S('tranquil', 'rovercrab', 'Rover Crab', 'robo', [20, 300], 0.8, ['#c0c0c0', '#f0f0f0', '#ffd040'], 'common', 'Collecting samples. Mostly your bait.'),
+  S('tranquil', 'tranquilcarp', 'Tranquil Carp', 'round', [10, 200], 1, ['#a0b8d0', '#f0f4ff', '#ffffff'], 'common', 'Very calm. Suspiciously calm.'),
+  S('tranquil', 'dustray', 'Moondust Ray', 'ray', [30, 300], 2, ['#9a9aa0', '#e0e0e8', '#6ab0ff'], 'uncommon', 'Kicks up little clouds of moondust.'),
+  S('tranquil', 'leaper', 'Low-G Leaper', 'dolphin', [0, 200], 2, ['#8ab0ff', '#ffffff', '#3a60c0'], 'rare', 'Jumps 40 meters in moon gravity. Show-off.'),
+  S('tranquil', 'astrofish', 'Astronaut Fish', 'slim', [0, 300], 0.8, ['#ffffff', '#e0e0e0', '#ff8a20'], 'rare', 'Wears a tiny helmet. Nobody knows how.'),
+  S('tranquil', 'eagleray', 'Lunar Eagle Ray', 'ray', [50, 300], 3.6, ['#d8d8e0', '#ffffff', '#ffd040'], 'epic', 'The Eagle has landed. In your cooler.'),
+  S('tranquil', 'tranquilkoi', 'Tranquility Koi', 'tall', [100, 300], 1.4, ['#ffffff', '#ffe0e0', '#ff4040'], 'legendary', 'So peaceful it makes other fish nap.', { glow: 0.3, pattern: P.spots }),
+  S('tranquil', 'moonkraken', 'The Moon Kraken', 'octopus', [150, 300], 12, ['#6a7080', '#c0c8d8', '#80c0ff'], 'boss', 'It thinks your boat is a moon lander. It collects those.', { glow: 0.3 }),
+  // ---------------------------------------------------------------- Crater Lakes (L19)
+  S('craters', 'craterguppy', 'Crater Guppy', 'slim', [0, 300], 0.3, ['#60e0ff', '#e0ffff', '#ffffff'], 'common', 'Lives in a crater. Likes it there.', { school: 7, glow: 0.3 }),
+  S('craters', 'ejectaeel', 'Ejecta Eel', 'eel', [100, 1200], 1.8, ['#6a6a70', '#c0c0c8', '#60e0ff'], 'uncommon', 'Got launched here by an impact. Stayed.', { glow: 0.4 }),
+  S('craters', 'geodegrouper', 'Geode Grouper', 'round', [200, 1500], 1.6, ['#5a4a6a', '#c0a0e0', '#a060ff'], 'uncommon', 'Rough outside. Sparkly inside.', { pattern: P.stars }),
+  S('craters', 'quartzpike', 'Quartz Pike', 'crystalfish', [100, 1400], 1.8, ['#e0e0ff', '#ffffff', '#80d0ff'], 'rare', 'Tell time with it. Probably.', { glow: 0.5 }),
+  S('craters', 'craterlobster', 'Crater Lobster', 'lobster', [300, 1800], 1.4, ['#4a5a8a', '#b0c0e0', '#60e0ff'], 'rare', 'Pinches with the force of a small meteor.', { glow: 0.3 }),
+  S('craters', 'cosmicammonite', 'Cosmic Ammonite', 'ammonite', [100, 1200], 1.2, ['#a0c0ff', '#ffffff', '#ff80ff'], 'epic', 'Its spiral is a tiny galaxy.', { glow: 0.6, pattern: P.stars }),
+  S('craters', 'impactor', 'Impactor Shark', 'shark', [200, 1800], 4, ['#3a3a44', '#a0a0b0', '#60e0ff'], 'epic', 'Hits like a meteor. Usually on purpose.'),
+  S('craters', 'craterserpent', 'Crater Serpent', 'serpent', [400, 1800], 9, ['#2a3a5a', '#a0c0e0', '#60e0ff'], 'legendary', 'Coils around entire craters.', { glow: 0.5 }),
+  S('craters', 'cratermaker', 'The Crater Maker', 'dunkle', [400, 1800], 14, ['#4a4a54', '#b0b0c0', '#60e0ff'], 'boss', 'Made most of these craters. With its face.', { glow: 0.4 }),
+  // ---------------------------------------------------------------- The Dark Side (L20)
+  S('darkside', 'shadowfin', 'Shadowfin', 'slim', [0, 800], 0.4, ['#1a1a2a', '#4a4a6a', '#a080ff'], 'common', 'You can only see its fins glowing.', { school: 6, glow: 0.4 }),
+  S('darkside', 'moonangler', 'Moon Angler', 'angler', [200, 2500], 1.2, ['#1a1a24', '#3a3a4a', '#a0ffff'], 'uncommon', 'Its lure is a tiny moon.', { glow: 1 }),
+  S('darkside', 'monolithfish', 'Monolith Fish', 'robo', [300, 2500], 2, ['#000000', '#1a1a1a', '#ffffff'], 'rare', "It's black, it's a rectangle, and it hums.", { glow: 0.2 }),
+  S('darkside', 'eclipseray', 'Eclipse Ray', 'ray', [100, 2000], 3.4, ['#0a0a10', '#ff9a40', '#ffd060'], 'rare', 'A ring of fire around a dark body.', { glow: 0.5 }),
+  S('darkside', 'greyfish', 'Grey Alien Fish', 'eyeball', [500, 2500], 1.2, ['#8a9a8a', '#c0d0c0', '#000000'], 'epic', 'Take me to your fisherman.', { pattern: P.eyes }),
+  S('darkside', 'farjelly', 'Far Side Jelly', 'jelly', [100, 2500], 1.2, ['#6a60ff', '#c0c0ff', '#ffffff'], 'uncommon', 'Nobody has seen it from the front.', { glow: 1, hazard: 'thief' }),
+  S('darkside', 'lunarsquid', 'Lunar Squid', 'squid', [300, 2500], 3, ['#2a2a50', '#8080c0', '#a0ffff'], 'epic', 'Inks moonlight.', { glow: 0.7 }),
+  S('darkside', 'darkstar', 'Dark Star', 'crystalfish', [1000, 2500], 2.5, ['#0a0a1a', '#3a3a6a', '#ffffff'], 'legendary', 'A star that stopped shining. Now it swims.', { pattern: P.stars, glow: 1 }),
+  S('darkside', 'darksidething', 'The Thing on the Dark Side', 'octopus', [1000, 2500], 18, ['#0a0a14', '#2a2a44', '#a080ff'], 'boss', 'Something rises when the Earth sets.', { pattern: P.eyes, glow: 0.8 }),
+
+  // ================================================================ REALM V: THE NEON DIMENSION
+  // ---------------------------------------------------------------- The Grid (L21)
+  S('nopen', 'pixelfry', 'Pixel Fry', 'pixel', [0, 150], 0.3, ['#ff40c0', '#ffc0f0', '#40ffff'], 'common', '8 bits of pure fish.', { pattern: P.pixel, school: 8 }),
+  S('nopen', 'synthray', 'Synth Ray', 'ray', [20, 300], 2, ['#8a2aff', '#ff80ff', '#40ffff'], 'uncommon', 'Plays a chord when it flaps.', { glow: 0.6 }),
+  S('nopen', 'vhseel', 'VHS Eel', 'eel', [30, 300], 1.6, ['#1a1a1a', '#3a3a3a', '#ff4040'], 'uncommon', 'Be kind, rewind.'),
+  S('nopen', 'neonjelly', 'Neon Jelly', 'jelly', [10, 300], 1, ['#ff40ff', '#ffa0ff', '#40ffff'], 'common', 'Zaps in six colors.', { glow: 1, hazard: 'sting' }),
+  S('nopen', 'robocrab', 'Robo Crab', 'robo', [50, 300], 0.9, ['#a0a0b0', '#e0e0e8', '#40ffff'], 'common', 'Batteries included.'),
+  S('nopen', 'chromedolphin', 'Chrome Dolphin', 'dolphin', [0, 120], 2.4, ['#c0c8e0', '#ffffff', '#ff5ab0'], 'rare', 'Reflects everything. Mostly your face.'),
+  S('nopen', 'vaporkoi', 'Vaporwave Koi', 'tall', [20, 300], 1.2, ['#ff9ad5', '#a0f0ff', '#ffffff'], 'epic', 'A E S T H E T I C'),
+  S('nopen', 'mixtape', 'Mixtape Marlin', 'sword', [30, 300], 3, ['#2a2a3a', '#ff5ab0', '#40ffff'], 'legendary', 'Plays the sickest 80s hits when you reel it in.', { glow: 0.5 }),
+  // ---------------------------------------------------------------- Sunset Boulevard (L21)
+  S('sunset', 'palmfish', 'Chrome Palm Fish', 'slim', [0, 100], 0.35, ['#ff8ad0', '#ffe0f0', '#ffd040'], 'common', 'Chills under the chrome palms.', { school: 6 }),
+  S('sunset', 'coolgrouper', 'Cool Guy Grouper', 'round', [10, 150], 1, ['#ff5ab0', '#ffc0e0', '#000000'], 'common', 'Wears sunglasses. At night.'),
+  S('sunset', 'sunsetray', 'Sunset Ray', 'ray', [10, 200], 2.2, ['#ff7a40', '#ffd0a0', '#ff40a0'], 'uncommon', 'Only swims at golden hour. It is always golden hour.', { glow: 0.3 }),
+  S('sunset', 'remora', 'Rollerblade Remora', 'slim', [0, 200], 0.6, ['#40ffff', '#ffffff', '#ff40ff'], 'uncommon', 'Hitches rides on chrome dolphins.'),
+  S('sunset', 'flamingofish', 'Flamingo Fish', 'seahorse', [0, 150], 0.9, ['#ff80b0', '#ffd0e0', '#ff4080'], 'rare', 'Stands on one fin.'),
+  S('sunset', 'discopuffer', 'Disco Puffer', 'round', [20, 200], 0.8, ['#e0e0f0', '#ffffff', '#ff40ff'], 'rare', 'Staying alive, staying alive.', { pattern: P.stars, glow: 0.4 }),
+  S('sunset', 'hotrod', 'Hot Rod Barracuda', 'sword', [20, 200], 2.4, ['#ff2a2a', '#ffd040', '#ffffff'], 'epic', 'Goes 0 to 60 in 0.8 seconds.', { pattern: P.stripes }),
+  S('sunset', 'outrun', 'Outrun Shark', 'shark', [50, 200], 4, ['#2a0a4a', '#ff5ab0', '#40ffff'], 'legendary', 'Races the sunset every evening. Always wins.', { pattern: P.pixel, glow: 0.6 }),
+  S('sunset', 'miamimeg', 'Miami Megalodon', 'shark', [80, 200], 16, ['#ffc0e0', '#ffffff', '#40ffff'], 'boss', 'Pastel suit. Loafers. Teeth.', { pattern: P.stripes, glow: 0.3 }),
+  // ---------------------------------------------------------------- Arcade Reef (L22)
+  S('arcade', 'chompfish', 'Chomp Fish', 'round', [0, 200], 0.4, ['#ffe020', '#fff0a0', '#000000'], 'common', 'Wakka wakka wakka.', { school: 5 }),
+  S('arcade', 'arcadeghost', 'Arcade Ghost', 'jelly', [20, 400], 0.9, ['#ff3030', '#ffa0a0', '#ffffff'], 'uncommon', 'Chases you around the maze. Steals your fish.', { glow: 0.6, hazard: 'thief' }),
+  S('arcade', 'blockfish', 'Block Fish', 'pixel', [20, 500], 0.8, ['#40a0ff', '#a0d0ff', '#ff4040'], 'common', 'Fits perfectly in any gap.', { pattern: P.pixel }),
+  S('arcade', 'invader', 'Space Invader Squid', 'squid', [50, 600], 1, ['#40ff40', '#a0ffa0', '#ffffff'], 'uncommon', 'Moves left, moves right, moves down.', { pattern: P.pixel, glow: 0.4 }),
+  S('arcade', 'highscore', 'High Score Salmon', 'slim', [30, 500], 1.2, ['#ffd040', '#fff0c0', '#ff4040'], 'uncommon', 'Always one point ahead of you.'),
+  S('arcade', 'joystickray', 'Joystick Ray', 'ray', [50, 600], 2.4, ['#2a2a2a', '#ff3030', '#ffffff'], 'rare', 'Up, down, left, right, swim.'),
+  S('arcade', 'midboss', 'Mid-Boss Bass', 'dunkle', [100, 600], 2.6, ['#6a2aff', '#c0a0ff', '#ffd040'], 'rare', 'Has a health bar. You can see it.'),
+  S('arcade', 'pixeldragon', 'Pixel Dragon', 'drake', [200, 600], 6, ['#40ff80', '#c0ffd0', '#ff40ff'], 'epic', 'Breathes 8-bit fire.', { pattern: P.pixel, glow: 0.4 }),
+  S('arcade', 'extralife', 'Extra Life Eel', 'eel', [300, 600], 2, ['#40ff40', '#ffffff', '#ff4040'], 'legendary', '1UP!', { glow: 0.8 }),
+  S('arcade', 'kongcrab', 'Kong Crab', 'crab', [300, 600], 10, ['#8a4a1a', '#e0b080', '#ff3030'], 'boss', 'Throws barrels. Classic.'),
+  // ---------------------------------------------------------------- The Glitch (L23)
+  S('glitch', 'missingno', 'MissingNo.', 'pixel', [0, 800], 1, ['#6a6a6a', '#c0c0c0', '#ff40ff'], 'common', 'Do not catch. Seriously. (Catch it.)', { pattern: P.pixel, school: 3 }),
+  S('glitch', 'nullpointer', 'Null Pointer', 'slim', [100, 1200], 0.5, ['#000000', '#40ff40', '#40ff40'], 'common', 'It references nothing. Deeply.', { glow: 0.5 }),
+  S('glitch', 'bitflipper', 'Bit Flipper', 'ray', [100, 1500], 2, ['#40ff40', '#000000', '#ffffff'], 'uncommon', '01001000 01101001', { glow: 0.5 }),
+  S('glitch', 'lagspike', 'Lag Spike', 'shark', [200, 1500], 2.8, ['#ff4040', '#000000', '#ffffff'], 'uncommon', "Teleports around. It's your connection."),
+  S('glitch', 'corrupted', 'Corrupted Grouper', 'round', [300, 1500], 2, ['#ff00ff', '#00ff00', '#000000'], 'rare', 'Its save file got corrupted.', { pattern: P.pixel, glow: 0.5 }),
+  S('glitch', 'wireframe', 'Wireframe Whale', 'whale', [200, 1500], 12, ['#000000', '#40ff40', '#40ff40'], 'epic', 'Textures failed to load.', { glow: 0.8 }),
+  S('glitch', 'bluescreen', 'Blue Screen Ray', 'ray', [500, 1700], 3, ['#1a3aff', '#ffffff', '#ffffff'], 'epic', 'A fatal exception has occurred.'),
+  S('glitch', 'rootkit', 'The Root', 'serpent', [700, 1700], 10, ['#000000', '#1a1a1a', '#40ff40'], 'legendary', 'sudo catch fish', { glow: 1 }),
+  S('glitch', 'kernelpanic', 'KERNEL PANIC', 'robo', [700, 1700], 14, ['#101010', '#40ff40', '#ff4040'], 'boss', 'Crashes everything it touches.', { pattern: P.pixel, glow: 0.8 }),
+
+  // ================================================================ REALM VI: THE COSMIC MAW
+  // ---------------------------------------------------------------- Event Horizon Sea (L24)
+  S('mopen', 'cometfish', 'Comet Fish', 'slim', [0, 400], 0.5, ['#a0e0ff', '#ffffff', '#ffd040'], 'common', 'Leaves a sparkly tail.', { school: 6, glow: 0.6 }),
+  S('mopen', 'asteroidcrab', 'Asteroid Crab', 'crab', [50, 1500], 1, ['#3a3440', '#8a8090', '#ff9a40'], 'common', 'Hard shell. Harder attitude.', { glow: 0.3 }),
+  S('mopen', 'nebulajelly', 'Nebula Bloom', 'jelly', [20, 1000], 1.6, ['#ff60ff', '#60a0ff', '#ffffff'], 'uncommon', 'Where new stars are born. Wobbly.', { glow: 1 }),
+  S('mopen', 'quasarray', 'Quasar Ray', 'ray', [100, 1500], 3.5, ['#1a0a3a', '#8060ff', '#ffffff'], 'rare', 'Outshines a thousand galaxies.', { glow: 0.8, pattern: P.stars }),
+  S('mopen', 'pulsareel', 'Pulsar Eel', 'eel', [200, 1500], 2.4, ['#ffffff', '#a0c0ff', '#40c0ff'], 'rare', 'Blinks 700 times per second.', { glow: 1 }),
+  S('mopen', 'darkmatter', 'Dark Matter Grouper', 'round', [300, 1500], 2.2, ['#050508', '#1a1a2a', '#6a40ff'], 'epic', "You can't see it. It's heavy anyway."),
+  S('mopen', 'starwhale', 'Star Whale', 'whale', [0, 1500], 26, ['#0a1040', '#6080ff', '#ffffff'], 'legendary', 'Carries whole solar systems on its back.', { pattern: P.stars, glow: 0.6 }),
+  // ---------------------------------------------------------------- The Accretion Rim (L24)
+  S('rim', 'plasmaminnow', 'Plasma Minnow', 'slim', [0, 600], 0.35, ['#ffa040', '#fff0c0', '#ffffff'], 'common', 'Hotter than the sun. Literally.', { school: 8, glow: 0.8 }),
+  S('rim', 'solarflare', 'Solar Flare Ray', 'ray', [100, 2000], 3, ['#ff6010', '#ffd080', '#ffff60'], 'uncommon', 'Disrupts your radio when it jumps.', { glow: 0.8 }),
+  S('rim', 'spaghetti', 'Spaghettified Eel', 'eel', [300, 3000], 6, ['#ff8a40', '#ffd0a0', '#ff4040'], 'uncommon', 'Stretched by tidal forces. Very long now.'),
+  S('rim', 'accretioncrab', 'Accretion Crab', 'crab', [500, 3000], 1.4, ['#8a4a1a', '#ffc080', '#ffa040'], 'rare', 'Collects space debris. Mostly your hooks.', { glow: 0.5 }),
+  S('rim', 'redgiant', 'Red Giant Grouper', 'round', [600, 3000], 3.4, ['#aa2a10', '#ff9060', '#ffd040'], 'rare', 'In a few billion years it will be a white dwarf.', { pattern: P.cracks, glow: 0.4 }),
+  S('rim', 'neutronstar', 'Neutron Starfish', 'starfish', [1000, 3000], 1, ['#ffffff', '#c0e0ff', '#40c0ff'], 'epic', 'A teaspoon of it weighs a billion tons.', { glow: 1 }),
+  S('rim', 'hawkingray', 'Hawking Ray', 'ray', [1500, 3300], 4, ['#000000', '#ff9a40', '#ffffff'], 'epic', 'Radiates slowly. Evaporates eventually.', { glow: 0.6 }),
+  S('rim', 'supernova', 'Supernova Sailfish', 'sword', [800, 3000], 5, ['#ff4010', '#ffd040', '#ffffff'], 'legendary', 'Explodes with joy when caught. Mostly joy.', { glow: 1 }),
+  S('rim', 'suneater', 'The Sun Eater', 'whale', [1500, 3300], 30, ['#3a0a05', '#ff6020', '#ffd040'], 'boss', 'Swallowed a star. Burps plasma.', { pattern: P.cracks, glow: 1 }),
+  // ---------------------------------------------------------------- The Maw (L25)
+  S('maw', 'wormminnow', 'Wormhole Minnow', 'slim', [0, 1000], 0.4, ['#a060ff', '#ffffff', '#40ffff'], 'common', 'Enters one side of your net, exits the other.', { school: 6, glow: 0.8 }),
+  S('maw', 'entropyeel', 'Entropy Eel', 'eel', [500, 5000], 3, ['#2a0a4a', '#8a40ff', '#ffffff'], 'uncommon', 'Things get a little more random around it.', { glow: 0.6 }),
+  S('maw', 'eventfish', 'Event Fish', 'eyeball', [1000, 6000], 2, ['#000000', '#ff9a40', '#ffffff'], 'rare', 'The last thing light ever sees.', { pattern: P.eyes, glow: 0.6 }),
+  S('maw', 'mawwhale', 'Maw Whale', 'whale', [500, 5000], 20, ['#050010', '#3a1a6a', '#c060ff'], 'epic', 'Lives in the throat of the universe. Cozy.', { glow: 0.5 }),
+  S('maw', 'timefish', 'Time Fish', 'crystalfish', [2000, 6000], 1.8, ['#ffe0a0', '#ffffff', '#ffd040'], 'epic', 'Caught it yesterday. Or tomorrow.', { glow: 0.8 }),
+  S('maw', 'bigbang', 'Big Bang Bass', 'round', [3000, 6000], 4, ['#ffffff', '#ffd0ff', '#40ffff'], 'legendary', 'Contains the start of a whole new universe.', { pattern: P.stars, glow: 1 }),
+  S('maw', 'singularity', 'The Singularity', 'eyeball', [5000, 6000], 3, ['#000000', '#000000', '#ffffff'], 'legendary', 'Infinitely small. Infinitely hungry.', { glow: 1 }),
+  S('maw', 'devourer', 'THE DEVOURER', 'serpent', [4000, 6000], 60, ['#050010', '#6a20c0', '#ff60ff'], 'boss', 'The ocean ends in its mouth. So does this story.', { pattern: P.eyes, glow: 1.2 }),
 
   // ---------------------------------------------------------------- Junk (anywhere)
   S('open', 'boot', 'Old Boot', 'boot', [0, 3000], 0.45, ['#5a3a1a', '#3a2a1a', '#8a6a4a'], 'common', 'Size 11. Left foot. Still looking for the right one.', { junk: true, anywhere: true, v: 2, weight: 0.8, bottom: true }),

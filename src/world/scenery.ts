@@ -1,11 +1,13 @@
 // Static world dressing: harbor buildings, island vegetation, zone landmarks and seafloor props.
-import { ZONES, type ZoneId, zoneWeights } from '../data/zones';
+// The Blue Planet has its harbor, landmarks and outposts; portal realms get theirs from realm-scenery.ts.
+import { activeRealm, NAMED_ZONES, type RealmId, realmById, type ZoneId, zoneWeights } from '../data/zones';
 import { hex, mat4, type Mat4, rng, Vec3 } from '../engine/math';
 import { Inst, type GpuMesh, type GpuModel, type Renderer } from '../engine/renderer';
 import type { Assets } from '../game/assets';
+import { buildRealmScenery } from './realm-scenery';
 import { HARBOR, heightAt, ISLANDS } from './terrain';
 
-interface Prop {
+export interface Prop {
   mesh: GpuMesh | GpuModel;
   m: Mat4;
   inst: Inst;
@@ -17,19 +19,40 @@ interface Prop {
   skip?: (mesh: GpuMesh) => boolean;
 }
 
-const zoneIdx = (id: string) => ZONES.findIndex((z) => z.id === id);
+const zoneIdx = (id: string) => NAMED_ZONES.findIndex((z) => z.id === id);
 
 export interface Outpost { zone: ZoneId; name: string; pos: Vec3; yaw: number; dock: Vec3 }
+/** A rift portal: the harbor gate travels between unlocked realms, the tear leads to the next realm. */
+export interface Portal { kind: 'gate' | 'tear'; pos: Vec3; yaw: number; color: [number, number, number] }
+
+const OUTPOST_NAMES: Partial<Record<ZoneId, string>> = {
+  kelp: 'Kelp Corner', coral: 'Reef Rest', deepblue: 'Blue Buoy Station', frost: 'Frostbite Hut', candy: 'Sugar Shack',
+  toxic: 'Hazmat Hub', magma: 'Ember Outpost', storm: 'Stormwatch', pirate: 'Skull Cove', atlantis: "Poseidon's Porch",
+  temple: 'Last Light', void: 'Event Horizon',
+  fern: 'Fern Hut', tarpit: 'Tar Pit Shack', crater: 'Impact Station',
+  hellfire: 'Brimstone Post', nether: 'Drift Dock', blackgate: 'Gatewatch',
+  tranquil: 'Tranquility Base', craters: 'Crater Camp', darkside: 'Dark Side Relay',
+  sunset: 'Sunset Shack', arcade: 'Pixel Pier', glitch: 'Checkpoint',
+  rim: 'Rim Station', maw: 'The Last Stop',
+};
+const BASE_NAMES: Record<RealmId, string> = {
+  blue: 'Harbor Tackle Shop', jurassic: 'Base Camp Rex', shattered: 'Fel Harbor', selene: 'Moon Base Alpha', neon: 'Neon Marina',
+  maw: 'Horizon Station',
+};
 
 export class Scenery {
+  readonly realm: RealmId;
   props: Prop[] = [];
+  portals: Portal[] = [];
+  baseName = '';
+  volcanoTops: Vec3[] = [];
+  factoryTop: Vec3 | null = null;
   terrain: GpuMesh;
   terrainInst = Inst.solid(3, 0);
   dockSpot = new Vec3();
   dockHeading = 0;
   shopPos = new Vec3();
-  lighthouseTop = new Vec3();
-  volcanoTop = new Vec3();
+  lighthouseTop: Vec3 | null = null;
   chests: { pos: Vec3; zone: number; taken: number }[] = [];
   outposts: Outpost[] = [];
   aquarium = { pos: new Vec3(), yaw: 0, halfX: 8.5, halfZ: 5, depth: 2.6 };
@@ -38,15 +61,103 @@ export class Scenery {
   private shopM = mat4.create();
   private bigFishPivot = new Vec3();
 
-  constructor(private r: Renderer, private a: Assets, terrain: GpuMesh) {
+  constructor(private r: Renderer, readonly a: Assets, terrain: GpuMesh, unlockedRealms: RealmId[] = ['blue']) {
     this.terrain = terrain;
-    this.buildHarbor();
-    this.buildIslands();
-    this.buildZones();
-    this.buildExpansion();
+    this.realm = activeRealm();
+    this.baseName = BASE_NAMES[this.realm];
+    if (this.realm === 'blue') {
+      this.buildHarbor();
+      this.buildIslands();
+      this.buildZones();
+      this.buildExpansion();
+    } else {
+      this.buildRealmBase();
+      this.buildIslands();
+      this.buildOutposts();
+      buildRealmScenery(this, this.realm);
+    }
+    for (const isl of ISLANDS) if (isl.kind === 'volcano') this.volcanoTops.push(new Vec3(isl.x, heightAt(isl.x + isl.r * 0.03, isl.z) + isl.top * 0.06, isl.z));
+    this.buildPortals(unlockedRealms);
   }
 
-  private add(mesh: GpuMesh | GpuModel, x: number, y: number, z: number, yaw: number, s: number, inst: Inst, maxDist: number, under = false, pitch = 0, roll = 0) {
+  /** Finds open water of a given depth near (x, z), searching outwards in rings. */
+  findWater(x: number, z: number, clearance = 30, depth = -8): Vec3 | null {
+    for (let ring = 0; ring < 12; ring++) {
+      const n = ring === 0 ? 1 : 12;
+      for (let k = 0; k < n; k++) {
+        const a = (k / n) * Math.PI * 2 + ring;
+        const px = x + Math.cos(a) * ring * 25, pz = z + Math.sin(a) * ring * 25;
+        let ok = true;
+        for (let j = 0; j < 8 && ok; j++) {
+          const b = (j / 8) * Math.PI * 2;
+          if (heightAt(px + Math.cos(b) * clearance, pz + Math.sin(b) * clearance) > depth) ok = false;
+        }
+        if (ok && heightAt(px, pz) < depth) return new Vec3(px, 0, pz);
+      }
+    }
+    return null;
+  }
+
+  /** (Re)creates this realm's rift portals; the harbor gate needs a second unlocked realm. */
+  buildPortals(unlocked: RealmId[]) {
+    this.portals = [];
+    const info = realmById(this.realm);
+    // the harbor gate appears once there is more than one realm to travel between
+    if (unlocked.length > 1 || this.realm !== 'blue') {
+      const home = this.realm === 'blue' ? this.findWater(-150, 150, 26, -6) : this.findWater(-130, 120, 26, -6);
+      if (home) this.portals.push({ kind: 'gate', pos: home, yaw: Math.atan2(-home.x, -home.z) + Math.PI / 2, color: [0.4, 0.9, 1.4] });
+    }
+    if (info.tear) {
+      const t = this.findWater(info.tear.x, info.tear.z, 26, -10);
+      if (t) this.portals.push({ kind: 'tear', pos: t, yaw: Math.atan2(-t.x, -t.z) + Math.PI / 2, color: [1.2, 0.4, 1.6] });
+    }
+  }
+
+  /** A realm's harbor: a big outpost next to the central island, with the shop. */
+  private buildRealmBase() {
+    const { models } = this.a;
+    const spot = this.findWater(0, 118, 24, -6) ?? new Vec3(0, 0, 118);
+    const yaw = Math.atan2(-spot.x, -spot.z);
+    const wood = Inst.solid(0, 0.045);
+    const glow = Inst.solid(2);
+    glow.a.set([1, 0.85, 0.55, 3.5]);
+    const p = this.add(models.outpost, spot.x, 0, spot.z, yaw, 1.25, wood, 3000);
+    p.skip = (mesh) => mesh.name === 'Glow';
+    this.add(models.outpost.byName.get('Glow')!, spot.x, 0, spot.z, yaw, 1.25, glow, 3000);
+    const dockLocal = models.outpost.nodes.get('DockSpot')!;
+    const m = mat4.compose(mat4.create(), spot.x, 0, spot.z, yaw, 0, 0, 1.25);
+    this.dockSpot.set(dockLocal[12], 0, dockLocal[14]).applyMat4(m);
+    this.dockSpot.y = 0;
+    this.dockHeading = yaw + Math.PI / 2;
+    this.shopPos.set(spot.x, 2, spot.z);
+  }
+
+  private buildOutposts() {
+    const { models } = this.a;
+    const glow = Inst.solid(2);
+    glow.a.set([1, 0.85, 0.55, 3.5]);
+    const wood = Inst.solid(0, 0.045);
+    const dockLocal = models.outpost.nodes.get('DockSpot')!;
+    for (const i of NAMED_ZONES.map((_, k) => k)) {
+      const z = NAMED_ZONES[i];
+      if (z.realm !== this.realm) continue;
+      const name = OUTPOST_NAMES[z.id];
+      if (!name) continue;
+      const found = this.findWater(z.x + (z.x > 0 ? -1 : 1) * z.radius * 0.3, z.z + (z.z > 0 ? -1 : 1) * z.radius * 0.3, 30, -8);
+      if (!found) continue;
+      const yaw = Math.atan2(z.x - found.x, z.z - found.z);
+      const o: Outpost = { zone: z.id, name, pos: found, yaw, dock: new Vec3() };
+      const m = mat4.compose(mat4.create(), found.x, 0, found.z, yaw);
+      o.dock.set(dockLocal[12], 0, dockLocal[14]).applyMat4(m);
+      o.dock.y = 0;
+      this.outposts.push(o);
+      const p = this.add(models.outpost, found.x, 0, found.z, yaw, 1, wood, 2600);
+      p.skip = (mesh) => mesh.name === 'Glow';
+      this.add(models.outpost.byName.get('Glow')!, found.x, 0, found.z, yaw, 1, glow, 2600);
+    }
+  }
+
+  add(mesh: GpuMesh | GpuModel, x: number, y: number, z: number, yaw: number, s: number, inst: Inst, maxDist: number, under = false, pitch = 0, roll = 0) {
     const p: Prop = { mesh, m: mat4.compose(mat4.create(), x, y, z, yaw, pitch, roll, s), inst, pos: new Vec3(x, y, z), maxDist, under };
     this.props.push(p);
     return p;
@@ -83,7 +194,7 @@ export class Scenery {
     const beacon = Inst.solid(2);
     beacon.a.set([1, 0.9, 0.6, 5]);
     this.add(models.lighthouse.byName.get('Glow')!, lx, ly, lz, 0.4, 1, beacon, 4000);
-    this.lighthouseTop.set(lx, ly + 17, lz);
+    this.lighthouseTop = new Vec3(lx, ly + 17, lz);
 
     const flag = Inst.solid(0, 0.03);
     this.add(this.a.flag, 5.5, 1.4, pierZ + 40, 0, 1, flag, 1500);
@@ -93,7 +204,9 @@ export class Scenery {
     const r = rng(99);
     const palmInst = Inst.solid(0, 0.05);
     const rockInst = Inst.solid(0, 0.06);
+    const realmKinds = new Set(['jungle', 'tar', 'bone', 'hellfire', 'fel', 'ash', 'moon', 'crater', 'neon', 'chrome', 'asteroid']);
     for (const isl of ISLANDS) {
+      if (realmKinds.has(isl.kind)) continue;
       const count = Math.round(isl.r / (isl.kind === 'volcano' ? 12 : 5));
       for (let k = 0; k < count; k++) {
         const ang = r() * Math.PI * 2;
@@ -121,16 +234,17 @@ export class Scenery {
     }
   }
 
-  private tint(h: string, outline = 0.05, glow = 0) {
+  tint(h: string, outline = 0.05, glow = 0) {
     const i = Inst.solid(0, outline);
     const c = hex(h);
     i.a.set([c[0] * 1.3, c[1] * 1.3, c[2] * 1.3, glow]);
     return i;
   }
 
-  private scatter(zone: number, count: number, seed: number, fn: (x: number, z: number, h: number, r: () => number) => void) {
+  scatter(zone: number, count: number, seed: number, fn: (x: number, z: number, h: number, r: () => number) => void) {
     const r = rng(seed);
-    const zn = ZONES[zone];
+    const zn = NAMED_ZONES[zone];
+    if (!zn) return;
     const w: number[] = [];
     let placed = 0, tries = 0;
     while (placed < count && tries++ < count * 20) {
@@ -183,8 +297,6 @@ export class Scenery {
       this.add(models.crystal, x, h, z, r() * 6.28, 2 + r() * 3, crystalIce, 200, true);
     });
 
-    const vol = ISLANDS.find((i) => i.kind === 'volcano')!;
-    this.volcanoTop.set(vol.x, heightAt(vol.x + 5, vol.z) + 10, vol.z);
     const basalt = this.tint('#3a3434', 0.05);
     this.scatter(Z.magma, 140, 41, (x, z, h, r) => {
       if (h > -3) return;
@@ -217,7 +329,7 @@ export class Scenery {
       this.add(models.crystal, x, h, z, r() * 6.28, 1.5 + r() * 2, runes, 220, true);
     });
 
-    const vz = ZONES[Z.void];
+    const vz = NAMED_ZONES[Z.void];
     const pl = Inst.solid(0, 0);
     pl.a.set([1, 1, 1, 0.35]);
     this.add(this.a.planets[0], vz.x + 300, 420, vz.z + 700, 0.3, 190, pl, 2000, false, 0.3, 0.2);
@@ -253,16 +365,13 @@ export class Scenery {
     this.add(models.aquarium, ax, ay, az, 0, 1, Inst.solid(0, 0.05), 2500);
 
     // outposts: one floating dock per zone
-    const NAMES: Partial<Record<ZoneId, string>> = {
-      kelp: 'Kelp Corner', coral: 'Reef Rest', deepblue: 'Blue Buoy Station', frost: 'Frostbite Hut', candy: 'Sugar Shack',
-      toxic: 'Hazmat Hub', magma: 'Ember Outpost', storm: 'Stormwatch', pirate: 'Skull Cove', atlantis: "Poseidon's Porch",
-      temple: 'Last Light', void: 'Event Horizon',
-    };
+    const NAMES = OUTPOST_NAMES;
     const glow = Inst.solid(2);
     glow.a.set([1, 0.85, 0.55, 3.5]);
     const wood = Inst.solid(0, 0.045);
     const dockLocal = models.outpost.nodes.get('DockSpot')!;
-    for (const z of ZONES) {
+    for (const z of NAMED_ZONES) {
+      if (z.realm !== 'blue') continue;
       const name = NAMES[z.id];
       if (!name) continue;
       let found: Vec3 | null = null;
@@ -347,7 +456,7 @@ export class Scenery {
     const sludge = Inst.solid(2);
     sludge.a.set([0.6, 1, 0.2, 3]);
     this.add(models.factory.byName.get('Glow')!, toxicMain.x + 8, heightAt(toxicMain.x + 8, toxicMain.z) - 0.5, toxicMain.z, 0.6, 1, sludge, 3500);
-    this.factoryTop.set(toxicMain.x + 8, 40, toxicMain.z);
+    this.factoryTop = new Vec3(toxicMain.x + 8, 40, toxicMain.z);
     const barrelInst = Inst.solid(0, 0.04);
     const barrelGlow = Inst.solid(2);
     barrelGlow.a.set([0.6, 1, 0.2, 3]);
@@ -412,11 +521,10 @@ export class Scenery {
   }
 
   /** Draws `mesh` with the same transform/visibility as prop `p` (glowing parts etc). */
-  private twin(p: Prop, mesh: GpuMesh, inst: Inst) {
-    this.props.push({ mesh, m: p.m, inst, pos: p.pos, maxDist: p.maxDist, under: p.under });
+  twin(p: Prop, mesh: GpuMesh, inst: Inst) {
+    this.props.push({ mesh, m: p.m, inst, pos: p.pos, maxDist: p.maxDist, under: p.under, phaseSpeed: p.phaseSpeed });
   }
 
-  factoryTop = new Vec3();
   spires: Vec3[] = [];
   private ghostM = mat4.create();
 
@@ -426,7 +534,7 @@ export class Scenery {
     const ga = time * 0.02;
     g.pos.set(g.center.x + Math.cos(ga) * g.radius, Math.sin(time * 0.7) * 0.3, g.center.z + Math.sin(ga) * g.radius);
     g.heading = Math.atan2(-Math.sin(ga), Math.cos(ga));
-    if (!underwater && g.pos.distanceXZ(cam) < 3500) {
+    if (this.realm === 'blue' && !underwater && g.pos.distanceXZ(cam) < 3500) {
       mat4.compose(this.ghostM, g.pos.x, g.pos.y, g.pos.z, g.heading, Math.sin(time * 0.5) * 0.03, Math.sin(time * 0.6) * 0.05, 1);
       this.r.draw(this.a.models.ghostship.byName.get('Ghostship')!, this.ghostM, ghostInst);
       this.r.draw(this.a.models.ghostship.byName.get('Glow')!, this.ghostM, ghostGlow);
@@ -443,12 +551,22 @@ export class Scenery {
       else r.draw(p.mesh, p.m, p.inst);
     }
     // spinning shop fish
-    const bf = this.a.models.shop.byName.get('BigFish')!;
-    const p = this.bigFishPivot;
-    mat4.copy(this.bigFishM, this.shopM);
-    mat4.multiply(this.bigFishM, this.bigFishM, mat4.compose(tmpM, p.x, p.y, p.z, Math.sin(time * 0.8) * 0.5, 0, Math.sin(time * 1.6) * 0.1));
-    mat4.multiply(this.bigFishM, this.bigFishM, mat4.compose(tmpM, -p.x, -p.y, -p.z));
-    r.draw(bf, this.bigFishM, bigFishInst);
+    if (this.realm === 'blue') {
+      const bf = this.a.models.shop.byName.get('BigFish')!;
+      const p = this.bigFishPivot;
+      mat4.copy(this.bigFishM, this.shopM);
+      mat4.multiply(this.bigFishM, this.bigFishM, mat4.compose(tmpM, p.x, p.y, p.z, Math.sin(time * 0.8) * 0.5, 0, Math.sin(time * 1.6) * 0.1));
+      mat4.multiply(this.bigFishM, this.bigFishM, mat4.compose(tmpM, -p.x, -p.y, -p.z));
+      r.draw(bf, this.bigFishM, bigFishInst);
+    }
+    // rift portals
+    for (const pt of this.portals) {
+      if (pt.pos.distanceXZ(cam) > 4000) continue;
+      const pm = mat4.compose(tmpM, pt.pos.x, pt.pos.y, pt.pos.z, pt.yaw, 0, 0, 1);
+      r.draw(this.a.models.portal.byName.get('Gate')!, pm, portalInst);
+      portalGlow.a.set([pt.color[0], pt.color[1], pt.color[2], 3 + Math.sin(time * 2) * 0.8]);
+      r.draw(this.a.models.portal.byName.get('Glow')!, pm, portalGlow);
+    }
     // treasure
     const chest = this.a.models.chest;
     for (const c of this.chests) {
@@ -461,6 +579,8 @@ export class Scenery {
 }
 
 const tmpM = mat4.create();
+const portalInst = Inst.solid(0, 0.08);
+const portalGlow = Inst.solid(2);
 const bigFishInst = Inst.solid(0, 0.05);
 const chestInst = Inst.solid(0, 0.03);
 chestInst.a.set([1, 1, 1, 0.15]);

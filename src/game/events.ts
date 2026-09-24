@@ -1,5 +1,5 @@
 // Random world events: feeding frenzies, golden hours and meteor showers.
-import { ALL_ZONES, type Zone, ZONES } from '../data/zones';
+import { ALL_ZONES, realmZones, type Zone } from '../data/zones';
 import { rng, Vec3 } from '../engine/math';
 import type { Renderer } from '../engine/renderer';
 import { heightAt } from '../world/terrain';
@@ -31,6 +31,14 @@ export class WorldEvents {
   private next = 150;
   private nextMeteor = 0;
   private r = rng(4711);
+
+  /** Ends everything in progress (after changing realms). */
+  clear() {
+    this.active = null;
+    this.fragments = [];
+    this.meteors = [];
+    this.next = 150;
+  }
 
   /** Returns a newly started event, if any. */
   update(dt: number, time: number, boat: Vec3, hull: number, night: boolean, fx: FX): WorldEvent | null {
@@ -78,7 +86,7 @@ export class WorldEvents {
     let pos = boat.clone();
     let radius = 0;
     if (kind === 'frenzy') {
-      const open = ZONES.filter((z) => z.hull <= hull);
+      const open = realmZones().filter((z) => z.hull <= hull);
       const near = open.filter((z) => Math.hypot(z.x - boat.x, z.z - boat.z) < z.radius + 900);
       const pool = near.length ? near : open;
       zone = pool[Math.floor(this.r() * pool.length)];

@@ -1,3 +1,4 @@
+import { TRACKS } from '../data/upgrades';
 import { describe, expect, it } from 'vitest';
 import { speciesById, SPECIES } from '../data/fish';
 import { itemById, itemPrice } from '../data/items';
@@ -149,7 +150,7 @@ describe('saves', () => {
     const v1 = { version: 1, money: 10, upgrades: { hull: 4, rod: 99 }, stats: { caught: 5 }, dex: { snapper: { caught: 1, best: 1 }, gone: { caught: 1, best: 1 } } };
     const s = migrateSave(v1);
     expect(s.version).toBe(2);
-    expect(s.upgrades.rod).toBe(11);
+    expect(s.upgrades.rod).toBe(TRACKS.find((t) => t.id === 'rod')!.tiers.length - 1);
     expect(s.stats.caught).toBe(5);
     expect(s.stats.bosses).toBe(0);
     expect(Object.keys(s.dex)).toEqual(['snapper']);

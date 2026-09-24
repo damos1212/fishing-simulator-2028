@@ -2,7 +2,7 @@
 import { ANIM, BOSS_FOR_ZONE, type Species, type WeatherKind } from '../data/fish';
 import type { Stats } from '../data/upgrades';
 import { LEVEL_VALUE } from '../data/upgrades';
-import { ZONES, zoneAt, type ZoneId, zoneWeights } from '../data/zones';
+import { activeOpen, NAMED_ZONES, realmZoneIdx, zoneAt, type ZoneId, zoneWeights } from '../data/zones';
 import { clamp, hex, mat4, rng, Vec3 } from '../engine/math';
 import { Inst, type Renderer } from '../engine/renderer';
 import { waveHeight } from '../world/environment';
@@ -259,8 +259,8 @@ export class Fishing {
   private pickZone(x: number, z: number): ZoneId {
     const w = zoneWeights(x, z, this.w);
     let r = this.rand();
-    for (let i = 0; i < ZONES.length; i++) { r -= w[i]; if (r <= 0) return ZONES[i].id; }
-    return 'open';
+    for (const i of realmZoneIdx()) { r -= w[i]; if (r <= 0) return NAMED_ZONES[i].id; }
+    return activeOpen().id;
   }
 
   private spawnFish(ctx: FishingContext, initial: boolean) {
@@ -388,7 +388,7 @@ export class Fishing {
       if (c.taken > ctx.time) continue;
       if (c.pos.distanceTo(this.lure) < 2.8) {
         c.taken = ctx.time + 600;
-        this.events.push({ type: 'treasure', amount: LEVEL_VALUE[ZONES[c.zone].level] * 15, pos: c.pos.clone() });
+        this.events.push({ type: 'treasure', amount: LEVEL_VALUE[NAMED_ZONES[c.zone].level] * 15, pos: c.pos.clone() });
       }
     }
 

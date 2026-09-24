@@ -125,8 +125,9 @@ fn main(@builtin(global_invocation_id) id: vec3u) {
       if (d < d1) { d2 = d1; d1 = d; } else if (d < d2) { d2 = d; }
     }
   }
-  let edge = sqrt(d2) - sqrt(d1);
-  let foam = 1.0 - smoothstep(0.0, 0.25, edge);
+  // soft bubbly blobs (cell centers), not a net of cell edges
+  let blob = 1.0 - smoothstep(0.05, 0.75, sqrt(d1));
+  let foam = clamp(blob * (0.6 + 0.4 * sin(h * 3.0)), 0.0, 1.0);
   textureStore(outTex, vec2i(id.xy), vec4f(dx * 0.08, dz * 0.08, h, foam));
 }
 `;

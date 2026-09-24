@@ -1,66 +1,119 @@
 // Analytic world height function (shared by rendering, collisions and spawning),
 // plus generation of the terrain mesh and the ocean's height map texture.
-import { OPEN_SEA, ZONES, zoneWeights } from '../data/zones';
+// Every realm has its own islands and seabed features; the active realm decides which apply.
+import { activeOpen, activeRealm, activeRealmInfo, NAMED_ZONES, type RealmId, realmZoneIdx, zoneWeights } from '../data/zones';
 import { clamp, fbm2, hex, lerp, noise2, type RGB, smoothstep } from '../engine/math';
 import type { MeshData } from '../engine/glb';
 import { toHalf } from '../engine/renderer';
 
-export const MAP_R = 3900;
-export const WORLD_R = 3450;
+/** Terrain extent and playable radius of the active realm (live bindings, updated by syncRealm). */
+export let MAP_R = 3900;
+export let WORLD_R = 3450;
 const MESH_P = 1.8;
 const MAP_P = 1.6;
 
-export type IslandKind = 'grass' | 'sand' | 'rock' | 'snow' | 'volcano' | 'basalt' | 'ruins' | 'candy' | 'toxic' | 'dark';
+export type IslandKind = 'grass' | 'sand' | 'rock' | 'snow' | 'volcano' | 'basalt' | 'ruins' | 'candy' | 'toxic' | 'dark'
+  | 'jungle' | 'tar' | 'bone' | 'hellfire' | 'fel' | 'ash' | 'moon' | 'crater' | 'neon' | 'chrome' | 'asteroid';
 export interface Island { x: number; z: number; r: number; top: number; kind: IslandKind; seed: number }
 
 export const HARBOR = { x: 0, z: 0, plateau: 3.5 };
 
-export const ISLANDS: Island[] = [
-  { x: 0, z: 0, r: 60, top: 3.5, kind: 'grass', seed: 1 },
-  { x: 170, z: -140, r: 28, top: 2.5, kind: 'sand', seed: 2 },
-  { x: -190, z: -60, r: 36, top: 6, kind: 'grass', seed: 3 },
-  { x: 120, z: 210, r: 22, top: 2.2, kind: 'sand', seed: 4 },
-  { x: -130, z: 210, r: 30, top: 4.5, kind: 'grass', seed: 5 },
-  { x: 770, z: -270, r: 70, top: 22, kind: 'rock', seed: 6 },
-  { x: 640, z: 70, r: 45, top: 14, kind: 'rock', seed: 7 },
-  { x: 880, z: 10, r: 34, top: 10, kind: 'rock', seed: 8 },
-  { x: 310, z: 900, r: 14, top: 6, kind: 'rock', seed: 9 },
-  { x: -430, z: -990, r: 110, top: 40, kind: 'snow', seed: 10 },
-  { x: -120, z: -1060, r: 70, top: 28, kind: 'snow', seed: 11 },
-  { x: -300, z: -760, r: 40, top: 14, kind: 'snow', seed: 12 },
-  { x: -1030, z: 150, r: 240, top: 165, kind: 'volcano', seed: 13 },
-  { x: -800, z: 320, r: 30, top: 8, kind: 'basalt', seed: 14 },
-  { x: -850, z: -70, r: 26, top: 6, kind: 'basalt', seed: 15 },
-  { x: -1500, z: 1480, r: 55, top: 6, kind: 'ruins', seed: 16 },
-  { x: -1350, z: 1640, r: 30, top: 4, kind: 'ruins', seed: 17 },
-  { x: -1650, z: 1610, r: 26, top: 3, kind: 'ruins', seed: 18 },
-  { x: 440, z: -760, r: 26, top: 2.5, kind: 'sand', seed: 19 },
-  { x: 560, z: -640, r: 20, top: 2, kind: 'sand', seed: 20 },
-  { x: 380, z: -610, r: 16, top: 2, kind: 'sand', seed: 21 },
-  { x: 1450, z: -900, r: 70, top: 8, kind: 'candy', seed: 22 },
-  { x: 1600, z: -1060, r: 40, top: 5, kind: 'candy', seed: 23 },
-  { x: 1290, z: -760, r: 30, top: 4, kind: 'candy', seed: 24 },
-  { x: 1900, z: 250, r: 80, top: 7, kind: 'toxic', seed: 25 },
-  { x: 2080, z: 430, r: 30, top: 3, kind: 'toxic', seed: 26 },
-  { x: -520, z: -2060, r: 50, top: 18, kind: 'dark', seed: 27 },
-  { x: -300, z: -1850, r: 30, top: 12, kind: 'dark', seed: 28 },
-  { x: -700, z: -1880, r: 24, top: 9, kind: 'dark', seed: 29 },
-  { x: -2000, z: -700, r: 70, top: 6, kind: 'sand', seed: 30 },
-  { x: -1850, z: -830, r: 24, top: 3, kind: 'sand', seed: 31 },
-  { x: 500, z: 1980, r: 40, top: 4, kind: 'ruins', seed: 32 },
+const I = (x: number, z: number, r: number, top: number, kind: IslandKind, seed: number): Island => ({ x, z, r, top, kind, seed });
+
+const BLUE_ISLANDS: Island[] = [
+  I(0, 0, 60, 3.5, 'grass', 1), I(170, -140, 28, 2.5, 'sand', 2), I(-190, -60, 36, 6, 'grass', 3), I(120, 210, 22, 2.2, 'sand', 4),
+  I(-130, 210, 30, 4.5, 'grass', 5), I(770, -270, 70, 22, 'rock', 6), I(640, 70, 45, 14, 'rock', 7), I(880, 10, 34, 10, 'rock', 8),
+  I(310, 900, 14, 6, 'rock', 9), I(-430, -990, 110, 40, 'snow', 10), I(-120, -1060, 70, 28, 'snow', 11), I(-300, -760, 40, 14, 'snow', 12),
+  I(-1030, 150, 240, 165, 'volcano', 13), I(-800, 320, 30, 8, 'basalt', 14), I(-850, -70, 26, 6, 'basalt', 15),
+  I(-1500, 1480, 55, 6, 'ruins', 16), I(-1350, 1640, 30, 4, 'ruins', 17), I(-1650, 1610, 26, 3, 'ruins', 18),
+  I(440, -760, 26, 2.5, 'sand', 19), I(560, -640, 20, 2, 'sand', 20), I(380, -610, 16, 2, 'sand', 21),
+  I(1450, -900, 70, 8, 'candy', 22), I(1600, -1060, 40, 5, 'candy', 23), I(1290, -760, 30, 4, 'candy', 24),
+  I(1900, 250, 80, 7, 'toxic', 25), I(2080, 430, 30, 3, 'toxic', 26),
+  I(-520, -2060, 50, 18, 'dark', 27), I(-300, -1850, 30, 12, 'dark', 28), I(-700, -1880, 24, 9, 'dark', 29),
+  I(-2000, -700, 70, 6, 'sand', 30), I(-1850, -830, 24, 3, 'sand', 31), I(500, 1980, 40, 4, 'ruins', 32),
 ];
 
-const VOLCANO = ISLANDS.find((i) => i.kind === 'volcano')!;
-const VOID = ZONES.find((z) => z.id === 'void')!;
-const MAGMA_I = ZONES.findIndex((z) => z.id === 'magma');
-const TOXIC_I = ZONES.findIndex((z) => z.id === 'toxic');
-const STORM_I = ZONES.findIndex((z) => z.id === 'storm');
-const ATLANTIS_I = ZONES.findIndex((z) => z.id === 'atlantis');
-const CANDY_I = ZONES.findIndex((z) => z.id === 'candy');
-const TEMPLE_I = ZONES.findIndex((z) => z.id === 'temple');
-const VOID_I = ZONES.findIndex((z) => z.id === 'void');
+export const REALM_ISLANDS: Record<RealmId, Island[]> = {
+  blue: BLUE_ISLANDS,
+  jurassic: [
+    I(0, 0, 65, 4, 'jungle', 101), I(-190, -130, 42, 12, 'jungle', 102), I(160, 180, 30, 6, 'jungle', 103), I(-260, 220, 26, 3, 'sand', 104),
+    I(700, -520, 125, 30, 'jungle', 105), I(930, -250, 72, 18, 'jungle', 106), I(560, -280, 40, 3, 'sand', 107), I(980, -580, 50, 14, 'jungle', 108),
+    I(-900, 470, 95, 2, 'tar', 109), I(-700, 690, 60, 1.8, 'tar', 110), I(-1060, 660, 42, 5, 'bone', 111), I(-690, 360, 34, 3, 'bone', 112),
+    I(-140, 1190, 75, 70, 'volcano', 113), I(560, 1170, 95, 120, 'volcano', 114), I(300, 1760, 62, 48, 'volcano', 115), I(20, 1580, 30, 10, 'basalt', 116),
+  ],
+  shattered: [
+    I(0, 0, 62, 4, 'ash', 201), I(200, -160, 30, 12, 'fel', 202), I(-180, 170, 34, 16, 'fel', 203),
+    I(-800, -620, 115, 46, 'hellfire', 204), I(-590, -380, 62, 26, 'hellfire', 205), I(-1010, -420, 52, 30, 'hellfire', 206), I(-560, -770, 40, 18, 'hellfire', 207),
+    I(1010, -90, 52, 22, 'fel', 208), I(820, -430, 32, 14, 'fel', 209), I(1120, -380, 26, 16, 'fel', 210),
+    I(60, 1080, 85, 32, 'fel', 211), I(-210, 1340, 42, 26, 'fel', 212), I(320, 1380, 46, 28, 'fel', 213),
+  ],
+  selene: [
+    I(0, 0, 72, 3, 'moon', 301), I(-200, -150, 45, 6, 'crater', 302), I(210, 140, 30, 2.5, 'moon', 303),
+    I(640, 420, 62, 3, 'moon', 304), I(820, 610, 36, 2, 'moon', 305), I(480, 620, 70, 10, 'crater', 306),
+    I(-860, -320, 190, 24, 'crater', 307), I(-1120, -80, 92, 15, 'crater', 308), I(-630, -580, 72, 12, 'crater', 309),
+    I(180, -1320, 52, 40, 'moon', 310), I(-110, -1150, 32, 10, 'moon', 311), I(430, -1180, 60, 12, 'crater', 312),
+  ],
+  neon: [
+    I(0, 0, 62, 3, 'neon', 401), I(-190, 150, 30, 20, 'chrome', 402), I(200, -150, 26, 16, 'chrome', 403),
+    I(-640, 440, 92, 4, 'neon', 404), I(-830, 300, 52, 3, 'neon', 405), I(-470, 630, 42, 3, 'neon', 406),
+    I(860, 320, 72, 62, 'chrome', 407), I(1010, 530, 42, 36, 'chrome', 408), I(700, 140, 36, 30, 'chrome', 409),
+    I(0, -1100, 64, 48, 'chrome', 410), I(-230, -1320, 36, 20, 'chrome', 411), I(250, -1380, 40, 24, 'chrome', 412),
+  ],
+  maw: [
+    I(0, 0, 62, 4, 'asteroid', 501), I(170, 160, 28, 14, 'asteroid', 502), I(-200, -140, 34, 18, 'asteroid', 503),
+    I(760, 0, 72, 32, 'asteroid', 504), I(910, -210, 42, 22, 'asteroid', 505), I(620, 250, 46, 26, 'asteroid', 506),
+    I(-380, 390, 42, 26, 'asteroid', 507), I(-900, 520, 32, 18, 'asteroid', 508),
+  ],
+};
+
+/** Islands of the active realm (live binding). */
+export let ISLANDS: Island[] = BLUE_ISLANDS;
+
+const zi = (id: string) => NAMED_ZONES.findIndex((z) => z.id === id);
+const MAGMA_I = zi('magma'), TOXIC_I = zi('toxic'), STORM_I = zi('storm'), ATLANTIS_I = zi('atlantis'), CANDY_I = zi('candy');
+const TEMPLE_I = zi('temple'), VOID_I = zi('void');
+const TAR_I = zi('tarpit'), CRATER_I = zi('crater'), FERN_I = zi('fern');
+const HELL_I = zi('hellfire'), NETHER_I = zi('nether'), GATE_I = zi('blackgate');
+const CRATERS_I = zi('craters'), DARK_I = zi('darkside');
+const SUNSET_I = zi('sunset'), ARCADE_I = zi('arcade'), GLITCH_I = zi('glitch');
+const RIM_I = zi('rim'), MAWZ_I = zi('maw');
+const VOID = NAMED_ZONES[VOID_I];
+const CRATER = NAMED_ZONES[CRATER_I];
+const GATE = NAMED_ZONES[GATE_I];
+const MAWZ = NAMED_ZONES[MAWZ_I];
+
+/** Switches terrain generation to the active realm (call after setActiveRealm). */
+export function syncRealm() {
+  const r = activeRealmInfo();
+  MAP_R = r.mapR;
+  WORLD_R = r.worldR;
+  ISLANDS = REALM_ISLANDS[r.id];
+  floorColors = NAMED_ZONES.map((z) => hex(z.env.floor));
+  openFloor = hex(activeOpen().env.floor);
+}
 
 const wTmp: number[] = [];
+
+const hash2 = (x: number, z: number, k: number) => {
+  const s = Math.sin(x * 127.1 + z * 311.7 + k * 74.7) * 43758.5453;
+  return s - Math.floor(s);
+};
+
+/** Moon-style crater field: bowls with raised rims, on a jittered grid. */
+function craterField(x: number, z: number, cell: number, k: number) {
+  const cx = Math.floor(x / cell), cz = Math.floor(z / cell);
+  let h = 0;
+  for (let j = -1; j <= 1; j++) for (let i = -1; i <= 1; i++) {
+    const gx = cx + i, gz = cz + j;
+    if (hash2(gx, gz, 3) > 0.7) continue;
+    const px = (gx + 0.2 + 0.6 * hash2(gx, gz, 1)) * cell, pz = (gz + 0.2 + 0.6 * hash2(gx, gz, 2)) * cell;
+    const r = cell * (0.18 + 0.26 * hash2(gx, gz, 4));
+    const d = Math.hypot(x - px, z - pz) / r;
+    if (d < 1) h += (d * d - 1) * 0.55 * r * k;
+    else if (d < 1.8) h += 0.18 * Math.exp(-(((d - 1) / 0.28) ** 2)) * r * k;
+  }
+  return h;
+}
 
 function islandHeight(isl: Island, x: number, z: number, base: number): number {
   const dx = x - isl.x, dz = z - isl.z;
@@ -72,17 +125,34 @@ function islandHeight(isl: Island, x: number, z: number, base: number): number {
   let h: number;
   if (isl.kind === 'volcano') {
     const cone = isl.top * Math.pow(clamp(1 - t, 0, 1), 1.25);
-    const crater = t < 0.14 ? 28 * (1 - Math.pow(t / 0.14, 2)) : 0;
+    const crater = t < 0.14 ? 28 * (isl.top / 165) * (1 - Math.pow(t / 0.14, 2)) : 0;
     h = t < 1 ? cone - crater + 4 * fbm2(x * 0.02, z * 0.02) : lerp(-0.6, base, smoothstep(1, 2.2, t));
     if (t >= 1) h = Math.min(h, -0.6);
     return Math.max(base, h);
   }
-  const steep = isl.kind === 'rock' || isl.kind === 'snow' || isl.kind === 'dark';
+  if (isl.kind === 'crater') {
+    // an atoll: a ring of rock around a sunken lagoon
+    const ring = Math.exp(-(((t - 0.78) / 0.2) ** 2));
+    h = t < 1.15 ? lerp(-12 - isl.top * 0.4, isl.top * (0.7 + 0.3 * fbm2(x * 0.03, z * 0.03)), ring) : lerp(-0.6, base, smoothstep(1.15, 2.4, t));
+    return t < 0.78 ? h : Math.max(base, h);
+  }
+  if (isl.kind === 'chrome') {
+    // square pyramids with stepped sides
+    const m = Math.max(Math.abs(dx), Math.abs(dz)) / isl.r;
+    if (m < 1) {
+      const raw = isl.top * (1 - m);
+      h = Math.max(0.8, Math.floor(raw / 4) * 4 + 0.8);
+    } else h = lerp(-0.6, base, smoothstep(1, 1.8, m));
+    return Math.max(base, h);
+  }
+  const steep = isl.kind === 'rock' || isl.kind === 'snow' || isl.kind === 'dark' || isl.kind === 'hellfire' || isl.kind === 'fel' || isl.kind === 'asteroid';
   if (t < 1) {
     const shoulder = steep ? smoothstep(0.7, 0.97, t) : smoothstep(0.45, 0.95, t);
     let top = isl.top;
-    if (isl.kind === 'grass') top += 2.5 * smoothstep(0.1, -0.3, noise2(x * 0.03, z * 0.03)) * (isl === ISLANDS[0] ? 0 : 1);
+    if (isl.kind === 'grass' || isl.kind === 'jungle') top += (isl.kind === 'jungle' ? 5 : 2.5) * smoothstep(0.1, -0.3, noise2(x * 0.03, z * 0.03)) * (isl === ISLANDS[0] ? 0 : 1);
     if (steep) top += isl.top * 0.35 * fbm2(x * 0.018 + isl.seed, z * 0.018);
+    if (isl.kind === 'hellfire' || isl.kind === 'fel') top += isl.top * 0.5 * Math.max(0, noise2(x * 0.09 + isl.seed, z * 0.09) - 0.2);
+    if (isl.kind === 'asteroid') top += isl.top * 0.4 * Math.abs(noise2(x * 0.05, z * 0.05 + isl.seed));
     h = lerp(top, 0.7, shoulder);
     h = lerp(h, -0.6, smoothstep(steep ? 0.96 : 0.92, 1, t));
   } else h = lerp(-0.6, base, smoothstep(1, 2.4, t));
@@ -92,50 +162,122 @@ function islandHeight(isl: Island, x: number, z: number, base: number): number {
 /** Terrain height (negative = seafloor depth). */
 export function heightAt(x: number, z: number): number {
   const w = zoneWeights(x, z, wTmp);
-  let depth = OPEN_SEA.floorDepth * w[ZONES.length];
-  for (let i = 0; i < ZONES.length; i++) depth += ZONES[i].floorDepth * w[i];
-  const n = fbm2(x * 0.0028, z * 0.0028, 3);
-  let h = -depth * (1 + 0.3 * n) - 5 * noise2(x * 0.021, z * 0.021) - 1.5 * noise2(x * 0.09, z * 0.09);
-  // sandbars near the harbor
-  h += 6 * smoothstep(0.25, 0.6, noise2(x * 0.006 + 3, z * 0.006)) * w[0];
-  // magma trenches, temple pits
-  if (w[MAGMA_I] > 0) h -= 90 * w[MAGMA_I] * smoothstep(0.35, 0.7, Math.abs(noise2(x * 0.004, z * 0.004)));
-  if (w[TEMPLE_I] > 0) h -= 120 * w[TEMPLE_I] * smoothstep(0.2, 0.7, noise2(x * 0.005 + 9, z * 0.005));
-  if (w[STORM_I] > 0) h -= 70 * w[STORM_I] * Math.abs(noise2(x * 0.008 + 4, z * 0.008));
-  if (w[ATLANTIS_I] > 0.05) {
-    // terraced plazas of the sunken city
-    const terr = Math.round(h / 45) * 45 + 3 * noise2(x * 0.05, z * 0.05);
-    h = lerp(h, terr, w[ATLANTIS_I] * 0.85);
+  const n = NAMED_ZONES.length;
+  const idx = realmZoneIdx();
+  let depth = activeOpen().floorDepth * w[n];
+  for (const i of idx) depth += NAMED_ZONES[i].floorDepth * w[i];
+  const nz = fbm2(x * 0.0028, z * 0.0028, 3);
+  let h = -depth * (1 + 0.3 * nz) - 5 * noise2(x * 0.021, z * 0.021) - 1.5 * noise2(x * 0.09, z * 0.09);
+  switch (activeRealm()) {
+    case 'blue': {
+      // sandbars near the harbor
+      h += 6 * smoothstep(0.25, 0.6, noise2(x * 0.006 + 3, z * 0.006)) * w[0];
+      // magma trenches, temple pits
+      if (w[MAGMA_I] > 0) h -= 90 * w[MAGMA_I] * smoothstep(0.35, 0.7, Math.abs(noise2(x * 0.004, z * 0.004)));
+      if (w[TEMPLE_I] > 0) h -= 120 * w[TEMPLE_I] * smoothstep(0.2, 0.7, noise2(x * 0.005 + 9, z * 0.005));
+      if (w[STORM_I] > 0) h -= 70 * w[STORM_I] * Math.abs(noise2(x * 0.008 + 4, z * 0.008));
+      if (w[ATLANTIS_I] > 0.05) {
+        // terraced plazas of the sunken city
+        const terr = Math.round(h / 45) * 45 + 3 * noise2(x * 0.05, z * 0.05);
+        h = lerp(h, terr, w[ATLANTIS_I] * 0.85);
+      }
+      break;
+    }
+    case 'jurassic': {
+      if (w[FERN_I] > 0) h += 10 * smoothstep(0.2, 0.6, noise2(x * 0.007 + 5, z * 0.007)) * w[FERN_I];
+      if (w[TAR_I] > 0) h = lerp(h, Math.max(h, -18 - 20 * Math.abs(noise2(x * 0.01, z * 0.01))), w[TAR_I] * 0.7);
+      if (w[CRATER_I] > 0) {
+        const dc = Math.hypot(x - CRATER.x, z - CRATER.z) / CRATER.radius;
+        h -= 500 * smoothstep(0.75, 0.1, dc) * w[CRATER_I];
+      }
+      break;
+    }
+    case 'shattered': {
+      if (w[HELL_I] > 0) h -= 50 * w[HELL_I] * (1 - Math.abs(noise2(x * 0.006, z * 0.006))) ** 3;
+      if (w[NETHER_I] > 0) h -= 420 * w[NETHER_I] * smoothstep(0.1, 0.02, Math.abs(noise2(x * 0.003 + 2, z * 0.003)));
+      if (w[GATE_I] > 0) h -= 700 * w[GATE_I] * smoothstep(0.9, 0.2, Math.hypot(x - GATE.x, z - GATE.z - 150) / GATE.radius);
+      break;
+    }
+    case 'selene': {
+      h += craterField(x, z, 260, 1) + craterField(x + 91, z - 57, 90, 0.7);
+      if (w[CRATERS_I] > 0) h += craterField(x - 33, z + 17, 420, 1.6) * w[CRATERS_I];
+      break;
+    }
+    case 'neon': {
+      const q = 14;
+      const stepped = Math.round(h / q) * q;
+      h = lerp(h, stepped, 0.9);
+      if (w[GLITCH_I] > 0) {
+        const bx = Math.floor(x / 40), bz = Math.floor(z / 40);
+        h -= w[GLITCH_I] * (hash2(bx, bz, 9) > 0.8 ? 180 * hash2(bx, bz, 10) : 0);
+      }
+      if (w[ARCADE_I] > 0) h -= 60 * w[ARCADE_I] * (Math.abs(Math.sin(x * 0.012)) > 0.9 ? 1 : 0);
+      break;
+    }
+    case 'maw': {
+      if (w[RIM_I] > 0) h -= 300 * w[RIM_I] * Math.abs(Math.sin(Math.hypot(x - 760, z) * 0.02 + noise2(x * 0.004, z * 0.004) * 2));
+      break;
+    }
   }
   h = Math.min(h, -2.5);
   const edge = Math.hypot(x, z);
   if (edge > WORLD_R) h = lerp(h, -1200, smoothstep(WORLD_R, MAP_R, edge));
   for (const isl of ISLANDS) h = islandHeight(isl, x, z, h);
-  if (w[VOID_I] > 0) {
+  if (activeRealm() === 'blue' && w[VOID_I] > 0) {
     const dv = Math.hypot(x - VOID.x, z - VOID.z);
     h = lerp(h, -3000, smoothstep(VOID.radius + 60, VOID.radius - 160, dv));
+  }
+  if (activeRealm() === 'maw' && w[MAWZ_I] > 0) {
+    const dv = Math.hypot(x - MAWZ.x, z - MAWZ.z);
+    h = lerp(h, -6000, smoothstep(MAWZ.radius + 40, MAWZ.radius - 200, dv));
   }
   return h;
 }
 
-/** Emissive mask (lava cracks / runes / void crystals) for coloring. */
+/** Emissive mask (lava cracks / runes / crystals / neon lines) for coloring. */
 function glowMask(x: number, z: number, h: number, w: number[]): number {
   let g = 0;
-  if (w[MAGMA_I] > 0.05) {
-    const dv = Math.hypot(x - VOLCANO.x, z - VOLCANO.z) / VOLCANO.r;
-    if (dv < 0.16 && h > 90) g = 1;
-    const river = 1 - smoothstep(0.0, 0.05, Math.abs(noise2(Math.atan2(z - VOLCANO.z, x - VOLCANO.x) * 2.2, dv * 2)));
+  for (const isl of ISLANDS) {
+    if (isl.kind !== 'volcano') continue;
+    const dv = Math.hypot(x - isl.x, z - isl.z) / isl.r;
+    if (dv > 1) continue;
+    if (dv < 0.16 && h > isl.top * 0.55) g = 1;
+    const river = 1 - smoothstep(0.0, 0.05, Math.abs(noise2(Math.atan2(z - isl.z, x - isl.x) * 2.2, dv * 2)));
     if (dv < 0.85 && h > 2) g = Math.max(g, river * smoothstep(0.85, 0.3, dv));
-    if (h < -15) g = Math.max(g, (1 - smoothstep(0, 0.04, Math.abs(noise2(x * 0.025, z * 0.025)))) * w[MAGMA_I]);
   }
-  if (w[TEMPLE_I] > 0.05 && h < -10) g = Math.max(g, step(0.82, noise2(x * 0.05, z * 0.05)) * w[TEMPLE_I] * 0.7);
-  if (w[VOID_I] > 0.05 && h < -5) g = Math.max(g, step(0.75, noise2(x * 0.08, z * 0.08)) * w[VOID_I]);
-  if (w[TOXIC_I] > 0.05 && h < 1) g = Math.max(g, smoothstep(0.35, 0.6, noise2(x * 0.03 + 7, z * 0.03)) * w[TOXIC_I]);
-  if (w[ATLANTIS_I] > 0.05 && h < -10) {
-    const road = Math.max(step(0.93, Math.abs(Math.sin(x * 0.07))), step(0.93, Math.abs(Math.sin(z * 0.07))));
-    g = Math.max(g, road * w[ATLANTIS_I] * 0.8);
+  const realm = activeRealm();
+  if (realm === 'blue') {
+    if (w[MAGMA_I] > 0.05 && h < -15) g = Math.max(g, (1 - smoothstep(0, 0.04, Math.abs(noise2(x * 0.025, z * 0.025)))) * w[MAGMA_I]);
+    if (w[TEMPLE_I] > 0.05 && h < -10) g = Math.max(g, step(0.82, noise2(x * 0.05, z * 0.05)) * w[TEMPLE_I] * 0.7);
+    if (w[VOID_I] > 0.05 && h < -5) g = Math.max(g, step(0.75, noise2(x * 0.08, z * 0.08)) * w[VOID_I]);
+    if (w[TOXIC_I] > 0.05 && h < 1) g = Math.max(g, smoothstep(0.35, 0.6, noise2(x * 0.03 + 7, z * 0.03)) * w[TOXIC_I]);
+    if (w[ATLANTIS_I] > 0.05 && h < -10) {
+      const road = Math.max(step(0.93, Math.abs(Math.sin(x * 0.07))), step(0.93, Math.abs(Math.sin(z * 0.07))));
+      g = Math.max(g, road * w[ATLANTIS_I] * 0.8);
+    }
+    if (w[CANDY_I] > 0.05 && h < -3) g = Math.max(g, step(0.9, noise2(x * 0.2, z * 0.2)) * w[CANDY_I] * 0.6);
+  } else if (realm === 'jurassic') {
+    if (w[CRATER_I] > 0.05 && h < -12) g = Math.max(g, (1 - smoothstep(0, 0.045, Math.abs(noise2(x * 0.02, z * 0.02)))) * w[CRATER_I]);
+    if (w[TAR_I] > 0.05 && h < -2) g = Math.max(g, step(0.88, noise2(x * 0.09, z * 0.09)) * w[TAR_I] * 0.5);
+  } else if (realm === 'shattered') {
+    const crack = 1 - smoothstep(0, 0.05, Math.abs(noise2(x * 0.03 + 1, z * 0.03)));
+    const nearIsl = nearestIsland(x, z);
+    if (nearIsl && (nearIsl.kind === 'hellfire' || nearIsl.kind === 'fel') && h > 1) g = Math.max(g, crack * 0.9);
+    if (h < -8) g = Math.max(g, crack * 0.6 * (w[GATE_I] + w[HELL_I] * 0.7 + 0.3));
+  } else if (realm === 'selene') {
+    if (h < -6) g = Math.max(g, step(0.84, noise2(x * 0.07, z * 0.07)) * (0.4 + w[CRATERS_I] * 0.6 + w[DARK_I]));
+  } else if (realm === 'neon') {
+    const gx = Math.abs(((x / 24) % 1 + 1) % 1 - 0.5), gz = Math.abs(((z / 24) % 1 + 1) % 1 - 0.5);
+    if (h < -2) g = Math.max(g, step(0.46, Math.max(gx, gz)) * 0.9);
+    const nearIsl = nearestIsland(x, z);
+    if (nearIsl?.kind === 'chrome' && h > 1) g = Math.max(g, step(0.8, ((h / 4) % 1)) * 0.8);
+    if (w[GLITCH_I] > 0.05) g = Math.max(g, step(0.9, hash2(Math.floor(x / 8), Math.floor(z / 8), 11)) * w[GLITCH_I]);
+    if (w[SUNSET_I] > 0.05 && h < -2) g *= 1 - w[SUNSET_I] * 0.5;
+  } else if (realm === 'maw') {
+    if (h < -5) g = Math.max(g, step(0.78, noise2(x * 0.05, z * 0.05)) * (0.6 + w[RIM_I]));
+    const nearIsl = nearestIsland(x, z);
+    if (nearIsl?.kind === 'asteroid' && h > 1) g = Math.max(g, (1 - smoothstep(0, 0.06, Math.abs(noise2(x * 0.06, z * 0.06)))) * 0.8);
   }
-  if (w[CANDY_I] > 0.05 && h < -3) g = Math.max(g, step(0.9, noise2(x * 0.2, z * 0.2)) * w[CANDY_I] * 0.6);
   return g;
 }
 const step = (e: number, x: number) => (x >= e ? 1 : 0);
@@ -146,9 +288,13 @@ const C = {
   moss: hex('#4f6a4a'), wetSand: hex('#d9c08a'),
   candySand: hex('#ffc8e4'), candyGrass: hex('#9af0c8'), candyRock: hex('#c08ae0'),
   sludge: hex('#6a6a48'), sludgeRock: hex('#4a4a3a'), darkRock: hex('#3a3e46'), darkGrass: hex('#4a5a4a'),
+  jungle: hex('#3f9a3a'), jungle2: hex('#2f7a30'), jungleRock: hex('#6a6a50'), tar: hex('#1e1a16'), tarSand: hex('#5a4a36'),
+  bone: hex('#e8dcc0'), hell: hex('#8a3a24'), hellRock: hex('#5a2418'), fel: hex('#3a3040'), felRock: hex('#241c2a'), ash: hex('#5a5060'),
+  moon: hex('#b8b8bc'), moonDark: hex('#8a8a90'), neonSand: hex('#ff9ad0'), neonGrass: hex('#7a3ad0'), chrome: hex('#c0c8e0'),
+  asteroid: hex('#3a3440'), asteroidRock: hex('#241e2a'),
 };
-const floorColors: RGB[] = ZONES.map((z) => hex(z.env.floor));
-const openFloor = hex(OPEN_SEA.env.floor);
+let floorColors: RGB[] = NAMED_ZONES.map((z) => hex(z.env.floor));
+let openFloor = hex(activeOpen().env.floor);
 
 function nearestIsland(x: number, z: number): Island | null {
   let best: Island | null = null, bd = Infinity;
@@ -159,15 +305,21 @@ function nearestIsland(x: number, z: number): Island | null {
   return bd < 2.6 ? best : null;
 }
 
+const BEACH: Partial<Record<IslandKind, RGB>> = {
+  basalt: C.blackSand, volcano: C.blackSand, snow: C.iceRock, candy: C.candySand, toxic: C.sludge, dark: C.darkRock,
+  tar: C.tarSand, bone: C.bone, hellfire: C.hellRock, fel: C.felRock, ash: C.ash, moon: C.moonDark, crater: C.moonDark,
+  neon: C.neonSand, chrome: C.chrome, asteroid: C.asteroidRock,
+};
+
 function colorAt(x: number, z: number, h: number, slope: number, out: number[]) {
   const w = zoneWeights(x, z, wTmp);
-  let r = openFloor[0] * w[ZONES.length], g = openFloor[1] * w[ZONES.length], b = openFloor[2] * w[ZONES.length];
-  for (let i = 0; i < ZONES.length; i++) { r += floorColors[i][0] * w[i]; g += floorColors[i][1] * w[i]; b += floorColors[i][2] * w[i]; }
+  const n = NAMED_ZONES.length;
+  let r = openFloor[0] * w[n], g = openFloor[1] * w[n], b = openFloor[2] * w[n];
+  for (const i of realmZoneIdx()) { r += floorColors[i][0] * w[i]; g += floorColors[i][1] * w[i]; b += floorColors[i][2] * w[i]; }
   let c: RGB = [r, g, b];
   const isl = nearestIsland(x, z);
   const kind = isl?.kind;
-  const beach: RGB = kind === 'basalt' || kind === 'volcano' ? C.blackSand : kind === 'snow' ? C.iceRock : kind === 'candy' ? C.candySand
-    : kind === 'toxic' ? C.sludge : kind === 'dark' ? C.darkRock : C.sand;
+  const beach: RGB = (kind && BEACH[kind]) || C.sand;
   // underwater: blend from beach sand to zone floor with depth
   if (h < 0.4) {
     const t = smoothstep(0, 30, -h);
@@ -185,6 +337,16 @@ function colorAt(x: number, z: number, h: number, slope: number, out: number[]) 
       case 'candy': land = slope > 0.4 ? C.candyRock : C.candyGrass; break;
       case 'toxic': land = slope > 0.4 ? C.sludgeRock : C.sludge; break;
       case 'dark': land = slope > 0.35 ? C.darkRock : C.darkGrass; break;
+      case 'jungle': land = slope > 0.45 ? C.jungleRock : noise2(x * 0.04, z * 0.04) > 0.1 ? C.jungle2 : C.jungle; break;
+      case 'tar': land = C.tar; break;
+      case 'bone': land = C.bone; break;
+      case 'hellfire': land = slope > 0.4 ? C.hellRock : C.hell; break;
+      case 'fel': land = slope > 0.4 ? C.felRock : C.fel; break;
+      case 'ash': land = C.ash; break;
+      case 'moon': case 'crater': land = slope > 0.35 ? C.moonDark : C.moon; break;
+      case 'neon': land = h > 2.2 ? C.neonGrass : C.neonSand; break;
+      case 'chrome': land = C.chrome; break;
+      case 'asteroid': land = slope > 0.35 ? C.asteroidRock : C.asteroid; break;
       default: land = slope > 0.4 ? C.rock : noise2(x * 0.05, z * 0.05) > 0.2 ? C.grass2 : C.grass;
     }
     c = h < 1.4 ? beach : land;
@@ -196,7 +358,7 @@ function colorAt(x: number, z: number, h: number, slope: number, out: number[]) 
 const warp = (u: number, R: number, P: number) => Math.sign(u) * Math.pow(Math.abs(u), P) * R;
 
 /** Builds the terrain mesh on a warped grid (dense around the harbor). */
-export function buildTerrainMesh(N = 600): MeshData {
+export function buildTerrainMesh(N = Math.round(600 * Math.sqrt(MAP_R / 3900))): MeshData {
   const V = N + 1;
   const pos = new Float32Array(V * V * 3);
   for (let j = 0; j < V; j++) for (let i = 0; i < V; i++) {

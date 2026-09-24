@@ -2,7 +2,7 @@
 import { CATCHABLE, SPECIES, speciesById, type Species, type WeatherKind } from '../data/fish';
 import { COSMETICS, cosmeticById, type CosmeticKind, DEFAULT_COSMETICS, ITEMS, type ItemId } from '../data/items';
 import { TRACKS, trackById, type Stats, type TrackId } from '../data/upgrades';
-import { ALL_ZONES, type ZoneId } from '../data/zones';
+import { ALL_ZONES, type RealmId, REALMS, type ZoneId } from '../data/zones';
 import type { Contract } from './progress';
 
 export interface CaughtFish {
@@ -18,7 +18,7 @@ export interface SaveStats {
   boots: number; bottles: number; ducks: number; treasures: number; contracts: number;
   upgrades: number; stolen: number; stung: number; maxHaul: number; bestCast: number; travels: number;
   itemsUsed: number; cosmetics: number; playTime: number;
-  maps: number; fragments: number; perfect: number; events: number;
+  maps: number; fragments: number; perfect: number; events: number; realmJumps: number;
 }
 
 export interface SaveData {
@@ -46,12 +46,15 @@ export interface SaveData {
   dayTime: number;
   quest: { index: number; progress: number; intro: boolean };
   treasureMap: { x: number; z: number; zone: ZoneId } | null;
+  /** Realm the boat is in, and the realms whose rift has been crossed. */
+  realm: RealmId;
+  realms: RealmId[];
 }
 
 const newStats = (): SaveStats => ({
   casts: 0, caught: 0, earned: 0, deepest: 0, snapped: 0, legendaries: 0, bosses: 0, night: 0, storm: 0, rain: 0,
   boots: 0, bottles: 0, ducks: 0, treasures: 0, contracts: 0, upgrades: 0, stolen: 0, stung: 0, maxHaul: 0, bestCast: 0,
-  travels: 0, itemsUsed: 0, cosmetics: 0, playTime: 0, maps: 0, fragments: 0, perfect: 0, events: 0,
+  travels: 0, itemsUsed: 0, cosmetics: 0, playTime: 0, maps: 0, fragments: 0, perfect: 0, events: 0, realmJumps: 0,
 });
 
 export function newSave(): SaveData {
@@ -84,6 +87,8 @@ export function newSave(): SaveData {
     dayTime: 0.32,
     quest: { index: 0, progress: 0, intro: false },
     treasureMap: null,
+    realm: 'blue',
+    realms: ['blue'],
   };
 }
 
@@ -114,6 +119,9 @@ export function migrateSave(raw: unknown): SaveData {
     outposts: Array.isArray(r.outposts) ? r.outposts : [],
     bosses: Array.isArray(r.bosses) ? r.bosses : [],
     pearls: typeof r.pearls === 'number' ? r.pearls : 0,
+    realms: Array.isArray(r.realms) ? ['blue' as RealmId, ...r.realms.filter((x) => x !== 'blue' && REALMS.some((z) => z.id === x))] : ['blue'],
+    realm: REALMS.some((z) => z.id === r.realm) && (r.realm === 'blue' || r.realms?.includes(r.realm!)) ? r.realm! : 'blue',
+    treasureMap: r.treasureMap && ALL_ZONES.some((z) => z.id === r.treasureMap!.zone) ? r.treasureMap : null,
   };
 }
 

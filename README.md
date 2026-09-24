@@ -20,13 +20,19 @@ You need a browser with WebGPU support (current Chrome, Edge or Safari).
 
 ## What's in the game
 
-- **14 zones** on one connected sea that blend into each other as you sail: Sunny Shallows, Open Sea, Kelp Coast, Coral Kingdom, The Deep Blue, Frostbite Fjord, Candy Lagoon, Toxic Sludge Bay, Magma Rift, Storm Reach, Pirate's Graveyard, Sunken Atlantis, the Drowned Temple and The Void. Hull upgrades unlock them in order.
-- **About 160 creatures** across 23 body types (fish, sharks, rays, eels, jellies, squid, crabs, lobsters, turtles, octopus, seahorses, starfish, sea serpents, whales, dolphins and junk). Some only bite at night or in certain weather. Each zone has a legendary fish.
-- **13 zone bosses**, summoned with Boss Bait. They have a health bar, enrage in phases and surge when you least expect it.
+- **Six realms.** The Blue Planet is one connected sea with 14 zones that blend into each other as you sail: Sunny Shallows, Open Sea, Kelp Coast, Coral Kingdom, The Deep Blue, Frostbite Fjord, Candy Lagoon, Toxic Sludge Bay, Magma Rift, Storm Reach, Pirate's Graveyard, Sunken Atlantis, the Drowned Temple and The Void. Beating the World Eater tears a rift in the sky, and each rift leads to a new world with its own sky, sea, islands, music and creatures:
+  - **II. Jurassic Tides**: Fern Lagoon, the Tar Pits and the Extinction Crater, with tree ferns, wading brachiosaurs, pterodactyls and plesiosaurs.
+  - **III. The Shattered Expanse**: Hellfire Shallows, the Nether Drift and the Black Gate, with fel-green seas, floating islands and a cracked planet overhead.
+  - **IV. Selene**: a moon with an ocean. Silver water, Earth and a ringed gas giant in a black sky, low gravity and jellies drifting through the air.
+  - **V. The Neon Dimension**: Sunset Boulevard, Arcade Reef and The Glitch, with a synthwave sun, a glowing grid sea, chrome palms and pixel fish.
+  - **VI. The Cosmic Maw**: the Accretion Rim and the Maw itself, under a black hole's accretion disk.
+  A rift gate at every harbor travels between the realms you have unlocked.
+- **About 330 creatures** across 34 body types, from sardines to plesiosaurs, fel drakes, crystal fish, robo crabs and MissingNo. Some only bite at night or in certain weather. Each zone has a legendary fish.
+- **27 bosses**, summoned with Boss Bait. They have a health bar, enrage in phases and surge when you least expect it. The last one is THE DEVOURER.
 - **Fights**: big fish yank left or right. Steer against the pull with A/D and pulse the reel so the line doesn't snap.
-- **Day/night cycle and weather**: clear, cloudy, rain, fog and storms with lightning. At night the sea has glowing plankton and the lighthouse beam sweeps the water.
-- **Progression**: 10 upgrade tracks (8 to 12 tiers each), a supplies shop, rotating contracts, 60 achievements, pearls, and a style shop with hats, boat paint, flags, lure skins and fishing line colors.
-- **Story**: 22 quests from six characters (Old Marta, Prof. Finnegan, Queen Coralia, Dr. Sludge, Captain Barnacle and The Stranger) that lead from the harbor to The Void. Some quests reward pets that ride on your boat.
+- **Day/night cycle and weather**: clear, cloudy, rain, fog and storms with lightning, volumetric clouds and cloud shadows. At night the sea has glowing plankton, auroras light up the fjord and the lighthouse beam sweeps the water.
+- **Progression**: 10 upgrade tracks with up to 26 tiers, money that climbs into the billions, a supplies shop, rotating contracts, 76 achievements, pearls, and a style shop with hats, pets, boat paint, flags, lure skins and fishing line colors.
+- **Story**: 43 quests in six chapters from ten characters (Old Marta, Prof. Finnegan, Queen Coralia, Dr. Sludge, Captain Barnacle, Dr. Rex Rexington, Vex, Commander Nova, DJ Synthia and The Stranger). Some quests reward pets that ride on your boat.
 - **World events**: feeding frenzies (fish bite 50% more), golden hours (every catch sells double) and meteor showers that drop collectible star fragments.
 - **Extras**: treasure maps from bottles mark an X to dig up; completing a zone's fish log masters it for +20% sell value; a perfect-cast sweet spot on the power meter; photo mode (F, then Enter to save a picture).
 - **World**: floating outposts in every zone for selling, restocking and fast travel; treasure chests; fishing hot spots; an aquarium at the harbor that shows off your best catches; dolphins, breaching whales, other fishing boats and a sailing ghost ship.
@@ -45,12 +51,16 @@ You need a browser with WebGPU support (current Chrome, Edge or Safari).
 | M / Esc / H | Map / pause / horn | |
 | F | Photo mode (Enter saves a picture) | |
 
-On a trackpad everything works without capturing the mouse. The camera also swings behind the boat or lure after a moment without manual look input.
+The game tells a mouse from a trackpad by its scroll events. With a mouse, click once to capture it for mouse look (or right-drag if the browser refuses). On a trackpad everything works without capturing the mouse. The camera also swings behind the boat or lure after a moment without manual look input.
+
+## Graphics
+
+The renderer draws, per frame: volumetric clouds raymarched into a sky dome, two cascaded sun shadow maps, a planar reflection of the scene, the opaque scene (resolved so the water can refract it), the water, and post-processing (god rays, bloom, tonemapping and grading). The water refracts and absorbs light by depth, reflects the world, has Gerstner waves plus tiling detail normals, glows through backlit crests and foams at shores, wakes and anything floating in it. Models carry a material id and baked ambient occlusion in their vertex colors, which the shaders turn into wood, stone, metal, cloth, foliage, glass, gold and ice. Pause > Graphics picks Low, Medium, High or Ultra.
 
 ## Layout
 
-- `src/engine/`: WebGPU renderer (toon meshes with inverted-hull outlines, Gerstner ocean, sky with sun/moon/stars, particles, bloom and tonemapping), WGSL shaders, GLB loader, math, procedural meshes
-- `src/world/`: terrain height function and mesh, zone atmosphere blending, day/night and weather, scenery placement (outposts, landmarks, props)
+- `src/engine/`: WebGPU renderer and WGSL shaders (`wgsl/`: lighting, materials, ocean, sky and clouds, post, GPU noise generators), GLB loader, math, procedural meshes
+- `src/world/`: per-realm terrain height function and mesh, zone atmosphere blending, day/night and weather, scenery placement (outposts, portals, landmarks, props)
 - `src/game/`: game loop, boat, camera, fishing (casting, lure, fish AI, fights, bosses, hazards), ambient life, aquarium, hot spots, FX, audio synth, economy, contracts and achievements, saves
 - `src/data/`: zones, species, upgrade tracks, supplies and cosmetics (tune the game here)
 - `src/ui/`: DOM overlay (HUD, shop, map, catch summary, pause menu)

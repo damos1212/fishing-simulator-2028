@@ -168,7 +168,8 @@ fn detailNormal(xz: vec2f, t: f32, strength: f32) -> vec2f {
     let ring = (1.0 - smoothstep(r - 0.8, r, d)) * smoothstep(r - 3.0, r - 0.8, d * 1.0 + 0.6);
     let blob = 1.0 - smoothstep(0.0, r, d);
     let life = clamp(1.0 - w.z / 6.0, 0.0, 1.0);
-    foam = max(foam, max(ring, blob * 0.6) * life * w.w * step(0.4, foamTex2 * 0.6 + vnoise(in.xz * 1.3 + w.xy) * 0.5));
+    let wn = dnoise(in.xz * 0.21 + w.xy * 0.013).a * 0.6 + dnoise(in.xz * 0.05 - w.xy * 0.02).r * 0.4;
+    foam = max(foam, max(ring, blob * 0.6) * life * w.w * smoothstep(0.32, 0.62, wn));
   }
   let bd = in.xz - frame.boat.xy;
   let fwd = vec2f(sin(frame.boat.z), cos(frame.boat.z));
@@ -214,8 +215,9 @@ fn detailNormal(xz: vec2f, t: f32, strength: f32) -> vec2f {
   col = mix(col, frame.lava.rgb * 0.6, clamp(frame.lava.w * 0.15 * shallowT, 0.0, 0.6));
   // neon realm: glowing grid on the water
   if (frame.fx.z > 0.01) {
-    let g = abs(fract(in.xz / 12.0) - 0.5);
-    let line = 1.0 - smoothstep(0.0, 0.035, min(g.x, g.y) * (1.0 + camDist * 0.004));
+    let g = 0.5 - abs(fract(in.xz / 12.0) - 0.5);
+    let lw = 0.004 + camDist * 0.00016;
+    let line = 1.0 - smoothstep(lw * 0.5, lw * 1.6, min(g.x, g.y));
     col += mix(vec3f(1.0, 0.2, 0.9), vec3f(0.1, 0.9, 1.0), 0.5 + 0.5 * sin(in.xz.x * 0.01 + t * 0.2)) * line * frame.fx.z * 1.5 * (1.0 - smoothstep(200.0, 1600.0, camDist));
   }
   // void: the ocean reflects the cosmos

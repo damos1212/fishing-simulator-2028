@@ -2,7 +2,7 @@
 import { BOSS_FOR_ZONE, CATCHABLE, RARITY_COLOR, speciesById, type WeatherKind } from '../data/fish';
 import { COSMETICS, type CosmeticKind, ITEMS, type ItemId } from '../data/items';
 import { TRACKS, type TrackId } from '../data/upgrades';
-import { ALL_ZONES, ZONES } from '../data/zones';
+import { activeRealm, activeRealmInfo, ALL_ZONES, REALMS, realmZones } from '../data/zones';
 import { clamp } from '../engine/math';
 import { type Npc, NPCS, QUESTS } from '../data/quests';
 import { coolerValue, DEX_TOTAL, formatMoney, type LandResult, masteredZones, nextTier, type SaveData } from '../game/economy';
@@ -27,7 +27,8 @@ const HAT_ICON: Record<string, string> = {
 const WEATHER_ICON: Record<WeatherKind, string> = { clear: '&#9728;', cloudy: '&#9729;', rain: '&#9730;', storm: '&#9889;', fog: '&#8776;' };
 
 export interface QuestInfo { title: string; npc: Npc; value: number; goal: number; step: number; total: number; money: boolean }
-export interface MapMarker { x: number; z: number; kind: 'x' | 'star' }
+export interface MapMarker { x: number; z: number; kind: 'x' | 'star' | 'gate' | 'tear' }
+export interface RealmChoice { id: string; name: string; numeral: string; tagline: string; color: string; here: boolean; open: boolean }
 
 export interface Destination { name: string; zone: string; cost: number; here: boolean }
 
@@ -64,7 +65,9 @@ export class UI {
   private shopTab: ShopTab = 'sell';
   private styleKind: CosmeticKind = 'hat';
   private dexZone = 'all';
-  modal: 'none' | 'catch' | 'shop' | 'map' | 'pause' | 'title' | 'dialog' | 'ending' = 'title';
+  modal: 'none' | 'catch' | 'shop' | 'map' | 'pause' | 'title' | 'dialog' | 'ending' | 'realms' = 'title';
+  private mapCache = new Map<string, HTMLCanvasElement>();
+  private dexRealm = 'blue';
   private dlg: { lines: string[]; i: number; shown: number; timer: number; done: () => void } | null = null;
   onClick: () => void = () => {};
 
@@ -330,17 +333,23 @@ export class UI {
   }
 
   // ------------------------------------------------------------------ ending
-  ending(save: SaveData, onClose: () => void) {
+  ending(save: SaveData, onClose: () => void, kind: 'teaser' | 'finale' = 'finale') {
     const mins = Math.round(save.stats.playTime / 60);
-    const m = h(`<div id="ending" class="modal"><div class="panel">
-      <div class="big display outlined">THE END?</div>
-      <p>The Stranger is gone, The Void is quiet, and every fish in the sea knows your name.<br>Marta says the coffee's on her. Forever.</p>
+    const text = kind === 'teaser'
+      ? `<div class="big display outlined">THE END?</div>
+      <p>The World Eater is gone and the sea is safe. Every fish in the ocean knows your name.</p>
+      <p class="tease display">...but high above The Void, the sky has cracked open.<br>Five more realms are waiting on the other side.</p>`
+      : `<div class="big display outlined">THE END</div>
+      <p>You crossed six realms, outfished dinosaurs, demons, moon krakens and a kernel panic,<br>and closed the Maw at the end of everything.</p>
+      <p>Marta says the coffee's on her. Forever.</p>`;
+    const m = h(`<div id="ending" class="modal ${kind}"><div class="panel">
+      ${text}
       <div class="cast">${Object.values(NPCS).map((n) => `<span style="background:${n.color}" title="${esc(n.name)}">${n.face}</span>`).join('')}</div>
       <div class="stats">Fish caught <b>${save.stats.caught}</b> &middot; Species logged <b>${Object.keys(save.dex).length}/${DEX_TOTAL}</b>
         &middot; Bosses <b>${save.bosses.length}</b> &middot; Deepest <b>${Math.round(save.stats.deepest)}m</b><br>
         Earned <b>${formatMoney(save.stats.earned)}</b> &middot; Achievements <b>${save.achievements.length}/${ACHIEVEMENTS.length}</b> &middot; Time <b>${mins} min</b></div>
-      <p><small>The sea is still full of records to break, trophies to win and contracts to finish.</small></p>
-      <button class="btn green">KEEP FISHING</button></div></div>`);
+      <p><small>${kind === 'teaser' ? 'Keep upgrading your hull: a Chrono Hull can survive the rift.' : 'Every realm is still full of records to break, trophies to win and legends to catch.'}</small></p>
+      <button class="btn green">${kind === 'teaser' ? 'TO BE CONTINUED...' : 'KEEP FISHING'}</button></div></div>`);
     this.root.appendChild(m);
     this.el.ending = m;
     this.modal = 'ending';
@@ -377,6 +386,8 @@ export class UI {
 
   // ------------------------------------------------------------------ maps
   prepareMap() { if (!this.mapImage) this.buildMapImage(); }
+  /** Call after switching realms: the charts show the active realm. */
+  resetMap() { this.mapImage = this.mapCache.get(activeRealm()) ?? null; }
 
   private buildMapImage() {
     const N = 460;
@@ -384,15 +395,16 @@ export class UI {
     cv.width = cv.height = N;
     const ctx = cv.getContext('2d')!;
     const img = ctx.createImageData(N, N);
-    const zc = ZONES.map((z) => hexRGB(z.mapColor));
-    const open = hexRGB('#2f78b8');
+    const zones = realmZones();
+    const zc = zones.map((z) => hexRGB(z.mapColor));
+    const open = hexRGB(activeRealm() === 'blue' ? '#2f78b8' : ALL_ZONES.find((z) => z.realm === activeRealm() && z.radius === 0)!.mapColor);
     for (let j = 0; j < N; j++) for (let i = 0; i < N; i++) {
       const x = (i / N - 0.5) * 2 * WORLD_R, z = (j / N - 0.5) * 2 * WORLD_R;
       const hgt = heightAt(x, z);
       let c = open;
       let best = Infinity;
-      for (let k = 0; k < ZONES.length; k++) {
-        const d = Math.hypot(x - ZONES[k].x, z - ZONES[k].z) / ZONES[k].radius;
+      for (let k = 0; k < zones.length; k++) {
+        const d = Math.hypot(x - zones[k].x, z - zones[k].z) / zones[k].radius;
         if (d < 1 && d < best) { best = d; c = zc[k]; }
       }
       let r = c[0], g = c[1], b = c[2];
@@ -410,6 +422,7 @@ export class UI {
     }
     ctx.putImageData(img, 0, 0);
     this.mapImage = cv;
+    this.mapCache.set(activeRealm(), cv);
   }
 
   drawMinimap(bx: number, bz: number, heading: number, spots: { x: number; z: number }[], docks: { x: number; z: number }[], markers: MapMarker[] = []) {
@@ -455,9 +468,10 @@ export class UI {
     c.strokeText('N', S / 2, 30); c.fillText('N', S / 2, 30);
   }
 
-  openMap(bx: number, bz: number, heading: number, hull: number, spots: { x: number; z: number }[], seen: string[], outposts: { x: number; z: number; name: string }[] = [], markers: MapMarker[] = []) {
+  openMap(bx: number, bz: number, heading: number, hull: number, spots: { x: number; z: number }[], seen: string[], outposts: { x: number; z: number; name: string }[] = [], markers: MapMarker[] = [], harbor = { x: 0, z: 60 }) {
     if (!this.mapImage) this.buildMapImage();
-    const m = h(`<div id="map" class="modal"><div class="panel"><h2>Sea Chart</h2><canvas width="1000" height="1000"></canvas>
+    const info = activeRealmInfo();
+    const m = h(`<div id="map" class="modal"><div class="panel"><h2>${info.id === 'blue' ? 'Sea Chart' : `Realm ${info.numeral}: ${esc(info.name)}`}</h2><canvas width="1000" height="1000"></canvas>
       <div style="text-align:center;margin-top:8px;font-weight:900">Press M to close &middot; <span style="color:#c08a00">$</span> harbor &middot; <span style="color:#1a8ab0">O</span> outposts (fast travel) &middot; <span style="color:#d02a2a">X</span> treasure &middot; <span style="color:#c08a00">&#9733;</span> event</div></div></div>`);
     this.root.appendChild(m);
     this.el.map = m;
@@ -469,7 +483,7 @@ export class UI {
     const toS = (x: number, z: number) => [(x / (2 * WORLD_R) + 0.5) * S, (z / (2 * WORLD_R) + 0.5) * S];
     c.textAlign = 'center';
     c.textBaseline = 'middle';
-    for (const z of ZONES) {
+    for (const z of realmZones()) {
       const [x, y] = toS(z.x, z.z);
       const known = seen.includes(z.id) || z.hull <= hull;
       c.lineWidth = 7; c.strokeStyle = '#1b1530'; c.fillStyle = '#fff'; c.font = '28px Lilita One';
@@ -497,7 +511,7 @@ export class UI {
       c.fillStyle = '#1b1530'; c.font = '16px Lilita One'; c.fillText('O', x, y + 1);
     }
     for (const mk of markers) { const [x, y] = toS(mk.x, mk.z); drawMarker(c, x, y, mk.kind, 1.3); }
-    const [hx, hy] = toS(0, 60);
+    const [hx, hy] = toS(harbor.x, harbor.z);
     c.fillStyle = '#ffd23a'; c.beginPath(); c.arc(hx, hy, 13, 0, Math.PI * 2); c.fill(); c.stroke();
     c.fillStyle = '#1b1530'; c.font = '18px Lilita One'; c.fillText('$', hx, hy + 1);
     const [bx2, by2] = toS(bx, bz);
@@ -506,6 +520,21 @@ export class UI {
     c.restore();
   }
   closeMap() { this.el.map?.remove(); this.modal = 'none'; }
+
+  // ------------------------------------------------------------------ realm select (rift gate)
+  realmSelect(list: RealmChoice[], onPick: (id: string | null) => void) {
+    const m = h(`<div id="realms" class="modal"><div class="panel">
+      <h2 class="display">The Rift Gate</h2><div class="sub">Choose a realm. The gate remembers every world you have crossed into.</div>
+      <div class="realms">${list.map((r) => `<button class="realm ${r.here ? 'here' : ''} ${r.open ? '' : 'locked'}" data-id="${r.id}" style="--c:${r.color}" ${r.open && !r.here ? '' : 'disabled'}>
+        <span class="num display">${r.numeral}</span><b class="display">${r.open ? esc(r.name) : '???'}</b><small>${r.here ? 'You are here' : r.open ? esc(r.tagline) : 'Find the rift in the previous realm'}</small></button>`).join('')}</div>
+      <button class="btn small blue" data-close>Stay here</button></div></div>`);
+    this.root.appendChild(m);
+    this.el.realms = m;
+    this.modal = 'realms';
+    const close = (id: string | null) => { m.remove(); delete this.el.realms; this.modal = 'none'; onPick(id); };
+    m.querySelectorAll('[data-id]').forEach((b) => b.addEventListener('click', () => close((b as HTMLElement).dataset.id!)));
+    m.querySelector('[data-close]')!.addEventListener('click', () => close(null));
+  }
 
   // ------------------------------------------------------------------ catch summary
   showCatch(res: LandResult, cast: number, onClose: () => void) {
@@ -647,12 +676,20 @@ export class UI {
         <h4 class="display">Records</h4><div class="stats">Fish caught: <b>${save.stats.caught}</b> &middot; Earned: <b>${formatMoney(save.stats.earned)}</b> &middot; Deepest: <b>${Math.round(save.stats.deepest)}m</b>
         &middot; Biggest haul: <b>${save.stats.maxHaul}</b> &middot; Best cast: <b>${formatMoney(save.stats.bestCast)}</b> &middot; Treasure: <b>${save.stats.treasures}</b></div>`;
     } else if (tab === 'dex') {
-      const zones = [{ id: 'all', name: 'All' }, ...ALL_ZONES.map((z) => ({ id: z.id, name: z.name }))];
+      const realmZonesAll = ALL_ZONES.filter((z) => z.realm === this.dexRealm);
+      if (this.dexZone !== 'all' && !realmZonesAll.some((z) => z.id === this.dexZone)) this.dexZone = 'all';
+      const zones = [{ id: 'all', name: 'All' }, ...realmZonesAll.map((z) => ({ id: z.id, name: z.name }))];
+      const realmTabs = REALMS.map((r) => {
+        const open = save.realms.includes(r.id);
+        const n = CATCHABLE.filter((sp) => ALL_ZONES.find((z) => z.id === sp.zone)?.realm === r.id);
+        return `<div class="tab ${this.dexRealm === r.id ? 'on' : ''} ${open ? '' : 'dim'}" data-dr="${r.id}">${r.numeral}. ${open ? esc(r.name) : '???'} <small>${n.filter((sp) => save.dex[sp.id]).length}/${n.length}</small></div>`;
+      }).join('');
       let html = `<div class="head"><h3>Fish Log</h3><div class="chip" style="position:static">${Object.keys(save.dex).length}/${DEX_TOTAL}</div></div>
+        <div class="subtabs realmtabs">${realmTabs}</div>
         <div class="subtabs">${zones.map((z) => `<div class="tab ${this.dexZone === z.id ? 'on' : ''}" data-dz="${z.id}">${esc(z.name)}</div>`).join('')}</div><div class="dex">`;
       const mastered = masteredZones(save);
       html = html.replace('<div class="dex">', `<div class="blurb">Log every regular fish in a zone to master it: its fish sell for +20%.</div><div class="dex">`);
-      for (const z of ALL_ZONES) {
+      for (const z of realmZonesAll) {
         if (this.dexZone !== 'all' && this.dexZone !== z.id) continue;
         const list = CATCHABLE.filter((s) => s.zone === z.id);
         html += `<div class="zonehead">${esc(z.name)} <small>${list.filter((s) => save.dex[s.id]).length}/${list.length}</small>${mastered.has(z.id) ? ' <span class="mastered">&#9733; MASTERED +20%</span>' : ''}</div>`;
@@ -665,17 +702,22 @@ export class UI {
       }
       main.innerHTML = html + '</div>';
       main.querySelectorAll('[data-dz]').forEach((b) => b.addEventListener('click', () => { this.dexZone = (b as HTMLElement).dataset.dz!; this.renderShop(save, hs); }));
+      main.querySelectorAll('[data-dr]').forEach((b) => b.addEventListener('click', () => { this.dexRealm = (b as HTMLElement).dataset.dr!; this.dexZone = 'all'; this.renderShop(save, hs); }));
     } else {
       const t = TRACKS.find((x) => x.id === tab)!;
       const lvl = save.upgrades[t.id];
-      main.innerHTML = head(t.name, t.blurb) + t.tiers.map((tier, i) => {
+      // long tracks: show the current tier, the next few and a hint of what lies beyond
+      const from = Math.max(0, lvl - 1), to = Math.min(t.tiers.length - 1, lvl + 4);
+      const before = from, after = t.tiers.length - 1 - to;
+      main.innerHTML = head(t.name, t.blurb) + (before ? `<div class="more">${before} earlier tier${before > 1 ? 's' : ''} owned</div>` : '') + t.tiers.map((tier, i) => {
+        if (i < from || i > to) return '';
         const owned = i <= lvl, next = i === lvl + 1;
         const cls = owned ? 'owned' : next ? 'next' : 'locked';
         const btn = owned ? (i === lvl ? '<button class="btn small gray" disabled>EQUIPPED</button>' : '<span style="font-weight:900">OWNED</span>')
           : next ? `<button class="btn small ${save.money >= tier.cost ? 'green' : 'gray'}" data-buy ${save.money >= tier.cost ? '' : 'disabled'}>${formatMoney(tier.cost)}</button>`
           : `<span style="font-weight:900">${formatMoney(tier.cost)}</span>`;
         return `<div class="tier ${cls}"><div class="ic">${TRACK_ICON[t.id]}${i}</div><div class="info"><b>${esc(tier.name)}</b><div>${esc(tier.desc)}</div><div class="stat">${esc(hs.statText(t.id, i))}</div></div>${btn}</div>`;
-      }).join('');
+      }).join('') + (after ? `<div class="more">+${after} more tier${after > 1 ? 's' : ''} for stranger waters and stranger worlds...</div>` : '');
       main.querySelector('[data-buy]')?.addEventListener('click', () => hs.buy(t.id));
     }
     main.scrollTop = scroll;
@@ -729,7 +771,17 @@ function drawMarker(c: CanvasRenderingContext2D, x: number, y: number, kind: Map
   c.translate(x, y);
   c.scale(s, s);
   c.lineJoin = 'round';
-  if (kind === 'x') {
+  if (kind === 'gate' || kind === 'tear') {
+    c.lineWidth = 5;
+    c.strokeStyle = '#1b1530';
+    c.fillStyle = kind === 'gate' ? '#60e0ff' : '#d060ff';
+    c.beginPath(); c.arc(0, 0, 13, 0, Math.PI * 2); c.fill(); c.stroke();
+    c.strokeStyle = '#ffffff';
+    c.lineWidth = 2.5;
+    c.beginPath();
+    for (let a = 0; a < Math.PI * 3.2; a += 0.2) c.lineTo(Math.cos(a) * a * 1.1, Math.sin(a) * a * 1.1);
+    c.stroke();
+  } else if (kind === 'x') {
     c.lineCap = 'round';
     for (const [w, col] of [[11, '#1b1530'], [6, '#e0302a']] as const) {
       c.lineWidth = w; c.strokeStyle = col;

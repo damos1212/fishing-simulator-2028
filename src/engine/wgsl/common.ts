@@ -34,6 +34,10 @@ struct Frame {
   water: vec4f,        // absorption per meter, planar reflections (0/1), foam amount, detail normal strength
   cloud: vec4f,        // base height, thickness, density, volumetric (0/1)
   extra: vec4f,        // cloud march steps, god ray strength, realm style, low gravity
+  planetA: vec4f,      // direction, angular radius
+  planetAC: vec4f,     // tint, style (1 earth, 2 gas giant, 3 cracked fel world, 4 moon, 5 ringed)
+  planetB: vec4f,
+  planetBC: vec4f,
   wake: array<vec4f, 16>, // x, z, age (s), strength
 };
 @group(0) @binding(0) var<uniform> frame: Frame;
@@ -175,6 +179,73 @@ fn starField(dir: vec3f, t: f32) -> f32 {
   let shape = 1.0 - smoothstep(0.15, 0.45, length(f));
   return step(0.9965, h) * tw * 2.5 * shape;
 }
+/** Draws a planet (and its rings) over the sky color, lit by the sun. */
+fn skyPlanet(dir: vec3f, p: vec4f, pc: vec4f, col: vec3f) -> vec3f {
+  if (p.w <= 0.0) { return col; }
+  let C = normalize(p.xyz);
+  let r = sin(p.w);
+  let style = u32(pc.w + 0.5);
+  let t = frame.camPos.w;
+  var out = col;
+  let b = dot(dir, C);
+  let disc = b * b - (1.0 - r * r);
+  var tPlanet = 1e9;
+  let L = frame.sunDir.xyz;
+  if (disc > 0.0 && b > 0.0) {
+    tPlanet = b - sqrt(disc);
+    let P = dir * tPlanet;
+    let n = normalize(P - C);
+    let up = vec3f(0.0, 1.0, 0.0);
+    let u = normalize(cross(C, up));
+    let v = cross(u, C);
+    let q = vec3f(dot(n, u), dot(n, v), dot(n, C));
+    let spin = t * 0.01;
+    var base = pc.rgb;
+    var emis = vec3f(0.0);
+    if (style == 1u) {
+      let land = fbm(vec2f(q.x * 2.2 + spin, q.y * 2.2 + q.z));
+      let cloud = fbm(vec2f(q.x * 3.1 - spin * 1.5, q.y * 3.3 + 7.0));
+      base = select(vec3f(0.05, 0.2, 0.6), mix(vec3f(0.2, 0.5, 0.15), vec3f(0.6, 0.5, 0.3), fbm(q.xy * 5.0)), land > 0.55);
+      base = mix(base, vec3f(0.95), smoothstep(0.55, 0.7, cloud));
+      base = mix(base, vec3f(0.95), smoothstep(0.8, 0.9, abs(q.y)));
+    } else if (style == 2u || style == 5u) {
+      let bands = sin(q.y * 14.0 + fbm(vec2f(q.x * 2.0 + spin, q.y * 3.0)) * 3.0);
+      base = mix(pc.rgb, pc.rgb * vec3f(1.3, 1.15, 1.0) + 0.1, bands * 0.5 + 0.5);
+      let spot = 1.0 - smoothstep(0.08, 0.14, length(vec2f(q.x * 0.8 - 0.25, q.y - 0.3)));
+      base = mix(base, pc.rgb * vec3f(1.4, 0.7, 0.5), spot);
+    } else if (style == 3u) {
+      let cr = worley(vec2f(q.x * 4.0 + q.z, q.y * 4.0), 0.0);
+      let crack = 1.0 - smoothstep(0.0, 0.08, cr.y - cr.x);
+      base = pc.rgb * (0.6 + 0.4 * fbm(q.xy * 6.0));
+      emis = vec3f(0.3, 1.4, 0.2) * crack * (0.8 + 0.4 * sin(t * 1.5 + q.x * 9.0));
+    } else {
+      let crater = fbm(q.xy * 6.0 + 3.0);
+      base = pc.rgb * (0.65 + 0.4 * crater) * (1.0 - 0.3 * smoothstep(0.6, 0.7, fbm(q.xy * 11.0)));
+    }
+    let ndl = dot(n, L);
+    let lit = smoothstep(-0.15, 0.35, ndl) * max(frame.sunDir.w, 0.4) * 0.7 + 0.04;
+    let rim = pow(1.0 - max(dot(-n, dir), 0.0), 3.0) * select(0.15, 0.6, style == 1u);
+    out = base * lit + emis + vec3f(0.4, 0.6, 1.0) * rim * lit;
+  }
+  if (style == 2u || style == 5u) {
+    let nr = normalize(vec3f(0.3, 1.0, 0.2));
+    let dn = dot(dir, nr);
+    if (abs(dn) > 1e-4) {
+      let tr = dot(C, nr) / dn;
+      if (tr > 0.0 && tr < tPlanet) {
+        let d = length(dir * tr - C) / r;
+        if (d > 1.35 && d < 2.4) {
+          let band = 0.55 + 0.45 * sin(d * 38.0) * sin(d * 11.0 + 1.0);
+          let a = smoothstep(1.35, 1.45, d) * smoothstep(2.4, 2.25, d) * band * 0.85;
+          let rc = mix(pc.rgb, vec3f(0.95, 0.9, 0.8), 0.5) * max(frame.sunDir.w, 0.4) * 0.8;
+          out = mix(out, rc, a);
+        }
+      }
+    }
+  }
+  return out;
+}
+
 /** Sky radiance in a direction: gradient, sun glow, stars, nebula, aurora and clouds. */
 fn skyColor(dir: vec3f, withSun: bool) -> vec3f {
   let t = frame.camPos.w;
@@ -204,6 +275,8 @@ fn skyColor(dir: vec3f, withSun: bool) -> vec3f {
     let ac = mix(vec3f(0.1, 1.0, 0.5), vec3f(0.7, 0.2, 1.0), smoothstep(0.2, 0.9, y + band * 0.4));
     col += ac * curtain * rays * smoothstep(0.05, 0.35, y) * frame.fx.y * 1.4;
   }
+  col = skyPlanet(dir, frame.planetA, frame.planetAC, col);
+  col = skyPlanet(dir, frame.planetB, frame.planetBC, col);
   var sunDisc = vec3f(0.0);
   if (withSun) {
     let disc = mix(smoothstep(0.9993, 0.9996, sd), smoothstep(0.9986, 0.9990, sd), night);

@@ -126,6 +126,7 @@ PAINT, WOOD, STONE, METAL, CLOTH, FOLIAGE, GLASS, GOLD, ICE, GLOSS, ORGANIC, SLI
 AUTO = -1        # browns become wood, everything else paint
 AUTO_METAL = -2  # like AUTO, but greys become metal
 AUTO_GOLD = -3   # like AUTO_METAL, plus saturated yellows become gold
+AUTO_PLANT = -4  # like AUTO, plus greens become foliage
 
 # Default material per exported file (or per mesh name inside it).
 MATERIALS = {
@@ -136,6 +137,9 @@ MATERIALS = {
     "factory": AUTO_METAL, "lollipop": GLOSS, "candycane": GLOSS, "gumdrop": SLIME, "icecream": GLOSS,
     "dome": AUTO_GOLD, "statue": STONE, "arch": STONE, "spire": STONE, "outpost": AUTO_METAL,
     "aquarium": AUTO_METAL, "shell": GLOSS, "anchor": METAL, "pets": ORGANIC,
+    "portal": STONE, "fern": AUTO_PLANT, "brachio": ORGANIC, "ptero": ORGANIC, "bones": STONE,
+    "floatrock": {"Rock": AUTO_PLANT}, "moonbase": {"Lander": AUTO_GOLD, "Dish": METAL, "MoonFlag": CLOTH, "Monolith": GLOSS},
+    "neonprops": {"Palm": {"*": METAL}, "Arcade": GLOSS, "Sign": METAL, "*": GLOSS},
     "hats": {"HatCrown": GOLD, "HatViking": AUTO_METAL, "HatPropeller": AUTO_METAL, "HatPropellerBlades": GLOSS, "HatFish": GLOSS, "*": CLOTH},
 }
 
@@ -155,6 +159,8 @@ def classify(rgb, mode):
         return METAL
     if mode == AUTO_GOLD and 0.1 < h < 0.17 and s > 0.5 and v > 0.55:
         return GOLD
+    if mode == AUTO_PLANT and 0.18 < h < 0.48 and s > 0.3:
+        return FOLIAGE
     return PAINT
 
 
@@ -175,7 +181,7 @@ def _mesh_objects(objs):
 def bake_ao_and_materials(name, objs, rays=20):
     """Writes material ids and raycast ambient occlusion into the vertex color alpha."""
     from mathutils.bvhtree import BVHTree
-    meshes = [o for o in _mesh_objects(objs) if o.name != "Glow" and not o.name.startswith("Glow")]
+    meshes = [o for o in _mesh_objects(objs) if "Glow" not in o.name]
     if not meshes:
         return
     dg = bpy.context.evaluated_depsgraph_get()
@@ -221,6 +227,8 @@ def bake_ao_and_materials(name, objs, rays=20):
                     hit += 1.0 - (dist / reach) * 0.5
             ao.append(max(0.25, 1.0 - hit / len(dirs) * 0.95))
         mode = spec.get(o.name, spec.get("*", AUTO)) if isinstance(spec, dict) else spec
+        if isinstance(mode, dict):
+            mode = mode.get("*", AUTO)
         for loop in me.loops:
             c = attr.data[loop.index].color
             occ = ao[loop.vertex_index]

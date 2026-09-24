@@ -1,5 +1,5 @@
 // Blends zone atmospheres by position and pushes them into the frame uniforms.
-import { OPEN_SEA, ZONES, type ZoneEnv, zoneWeights } from '../data/zones';
+import { activeOpen, NAMED_ZONES, OPEN_SEA, REALM_OPEN, realmZoneIdx, type ZoneEnv, zoneWeights } from '../data/zones';
 import type { FrameState } from '../engine/frame';
 import { clamp, hex, mixRGB, type RGB, smoothstep } from '../engine/math';
 import { heightAt } from './terrain';
@@ -25,8 +25,8 @@ const lin = (e: ZoneEnv): LinEnv => ({
   c: Object.fromEntries(COLOR_KEYS.map((k) => [k, hex(e[k])])) as Record<ColKey, RGB>,
   n: Object.fromEntries(NUM_KEYS.map((k) => [k, e[k]])) as Record<NumKey, number>,
 });
-const ZONE_LIN = ZONES.map((z) => lin(z.env));
-const OPEN_LIN = lin(OPEN_SEA.env);
+const ZONE_LIN = NAMED_ZONES.map((z) => lin(z.env));
+const OPEN_LIN = new Map(Object.values(REALM_OPEN).map((z) => [z.id, lin(z.env)]));
 
 export class Environment {
   cur: LinEnv = lin(OPEN_SEA.env);
@@ -37,10 +37,13 @@ export class Environment {
   update(x: number, z: number, dt: number) {
     const w = zoneWeights(x, z, this.w);
     const t = this.target;
+    const open = OPEN_LIN.get(activeOpen().id)!;
+    const idx = realmZoneIdx();
+    const nz = NAMED_ZONES.length;
     for (const k of COLOR_KEYS) {
-      const o = OPEN_LIN.c[k], wf = w[ZONES.length];
+      const o = open.c[k], wf = w[nz];
       let r = o[0] * wf, g = o[1] * wf, b = o[2] * wf;
-      for (let i = 0; i < ZONES.length; i++) {
+      for (const i of idx) {
         if (w[i] <= 0) continue;
         const c = ZONE_LIN[i].c[k];
         r += c[0] * w[i]; g += c[1] * w[i]; b += c[2] * w[i];
@@ -48,8 +51,8 @@ export class Environment {
       t.c[k] = [r, g, b];
     }
     for (const k of NUM_KEYS) {
-      let v = OPEN_LIN.n[k] * w[ZONES.length];
-      for (let i = 0; i < ZONES.length; i++) if (w[i] > 0) v += ZONE_LIN[i].n[k] * w[i];
+      let v = open.n[k] * w[nz];
+      for (const i of idx) if (w[i] > 0) v += ZONE_LIN[i].n[k] * w[i];
       t.n[k] = v;
     }
     const a = dt < 0 ? 1 : 1 - Math.exp(-dt * 1.5);

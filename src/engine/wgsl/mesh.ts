@@ -114,7 +114,8 @@ fn animate(p: vec3f, inst: Inst) -> vec3f {
       q.y += sin(ph + select(0.0, 3.14159, p.z < 0.0)) * amp * fl * 2.5;
     }
     case 14u: { // hover / bob in place (floating rocks, drones)
-      q.y += sin(ph * 0.8 + p.x * 0.3) * amp * 0.5;
+      q.y += sin(ph * 0.8) * amp * 0.5;
+      q.x += sin(ph * 0.5) * amp * 0.15;
     }
     default: {}
   }

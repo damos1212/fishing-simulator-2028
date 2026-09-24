@@ -2,13 +2,16 @@
 import { BOSS_FOR_ZONE, RARITY_COLOR, speciesById } from '../data/fish';
 import { cosmeticById, itemById, itemPrice, ITEMS, type ItemId } from '../data/items';
 import { LEVEL_VALUE, nicePrice, TRACKS, type Stats, type TrackId } from '../data/upgrades';
-import { type Zone, type ZoneId, ZONES, zoneAt, zoneWeights } from '../data/zones';
+import {
+  activeRealm, activeRealmInfo, NAMED_ZONES, type RealmId, realmById, REALMS, realmZoneIdx, realmZones, setActiveRealm, type Zone, type ZoneId,
+  zoneAt, zoneWeights,
+} from '../data/zones';
 import { clamp, damp, dampAngle, hex, rng, Vec3 } from '../engine/math';
 import { type GpuMesh, QUALITY, type Renderer } from '../engine/renderer';
 import { UI } from '../ui/ui';
 import { Environment, waveHeight } from '../world/environment';
-import { type Outpost, Scenery } from '../world/scenery';
-import { heightAt, MAP_POWER, MAP_R, WORLD_R } from '../world/terrain';
+import { type Outpost, type Portal, Scenery } from '../world/scenery';
+import { buildHeightMap, buildTerrainMesh, heightAt, MAP_POWER, MAP_R, syncRealm, WORLD_R } from '../world/terrain';
 import { TimeWeather } from '../world/timeweather';
 import { Aquarium } from './aquarium';
 import type { Assets } from './assets';
@@ -32,9 +35,25 @@ import { clearSave, writeSave } from './save';
 const MOOD: Record<ZoneId, Mood> = {
   open: 'sunny', shallows: 'sunny', kelp: 'kelp', coral: 'sunny', deepblue: 'deep', frost: 'frost', candy: 'shop', toxic: 'magma',
   magma: 'magma', storm: 'deep', pirate: 'eerie', atlantis: 'frost', temple: 'eerie', void: 'void',
+  jopen: 'jungle', fern: 'jungle', tarpit: 'kelp', crater: 'magma',
+  sopen: 'fel', hellfire: 'fel', nether: 'void', blackgate: 'eerie',
+  lopen: 'moon', tranquil: 'moon', craters: 'frost', darkside: 'eerie',
+  nopen: 'synth', sunset: 'synth', arcade: 'shop', glitch: 'synth',
+  mopen: 'cosmic', rim: 'cosmic', maw: 'eerie',
 };
 
 interface Flyer { actor: FishActor; t: number; from: Vec3; local: Vec3; spin: number }
+type SkyPlanet = [dx: number, dy: number, dz: number, radius: number, r: number, g: number, b: number, style: number];
+/** Planets hanging in each realm's sky (style: 1 earth, 2 gas giant, 3 cracked fel world, 4 moon, 5 ringed). */
+const SKY_PLANETS: Record<RealmId, SkyPlanet[]> = {
+  blue: [],
+  jurassic: [[0.6, 0.32, -0.7, 0.05, 0.92, 0.9, 0.85, 4]],
+  shattered: [[-0.5, 0.42, -0.75, 0.3, 0.35, 0.25, 0.45, 3], [0.7, 0.3, 0.6, 0.06, 0.7, 0.6, 0.8, 4]],
+  selene: [[0.3, 0.45, -0.8, 0.12, 1, 1, 1, 1], [-0.8, 0.28, 0.5, 0.2, 1.0, 0.7, 0.45, 2]],
+  neon: [[-0.6, 0.38, -0.7, 0.16, 0.9, 0.4, 1.0, 5], [0.5, 0.5, 0.6, 0.05, 0.4, 1, 1, 4]],
+  maw: [[0.8, 0.28, 0.4, 0.18, 0.6, 0.4, 1.0, 2]],
+};
+export interface RealmWorld { terrain: GpuMesh; heightmap: Uint16Array; scenery?: Scenery }
 export type DockTarget = { kind: 'harbor' } | { kind: 'outpost'; outpost: Outpost };
 
 const TUTORIAL = [
@@ -93,10 +112,17 @@ export class Game {
   private lastHonk = 0;
   private questCheckT = 0;
   private fireworks = 0;
+  /** Built worlds per realm (terrain, height map, scenery), so returning is instant. */
+  private worlds = new Map<RealmId, RealmWorld>();
+  private warp: { t: number; to: RealmId; switched: boolean; tear: boolean } | null = null;
+  private portalCool = 0;
+  private portalHint: Portal | null = null;
 
-  constructor(private r: Renderer, private a: Assets, terrain: GpuMesh, public ui: UI, public save: SaveData, private canvas: HTMLCanvasElement) {
+  constructor(private r: Renderer, private a: Assets, world: RealmWorld, public ui: UI, public save: SaveData, private canvas: HTMLCanvasElement) {
     this.input = new Input(canvas);
-    this.scenery = new Scenery(r, a, terrain);
+    this.scenery = new Scenery(r, a, world.terrain, save.realms);
+    world.scenery = this.scenery;
+    this.worlds.set(activeRealm(), world);
     const aq = this.scenery.aquarium;
     this.aquarium = new Aquarium(aq.pos, aq.halfX, aq.halfZ);
     this.stats = computeStats(save.upgrades);
@@ -108,11 +134,10 @@ export class Game {
       this.boat.heading = b.heading;
     } else {
       this.boat.pos.copy(this.scenery.dockSpot);
-      this.boat.heading = 0;
+      this.boat.heading = this.scenery.dockHeading === Math.PI ? 0 : this.scenery.dockHeading;
     }
-    const wps = [this.scenery.dockSpot.clone().add(new Vec3(0, 0, 80)), ...this.scenery.outposts.filter((o) => ['kelp', 'coral', 'deepblue'].includes(o.zone)).map((o) => o.pos),
-      new Vec3(200, 0, -250), new Vec3(-250, 0, 150), new Vec3(300, 0, 300)];
-    this.life = new Life(wps);
+    this.life = new Life();
+    this.life.setRealm(activeRealm(), this.scenery);
     this.zone = zoneAt(this.boat.pos.x, this.boat.pos.z);
     this.cam.yaw = this.boat.heading + Math.PI + 0.5;
     this.cam.desired.set(this.boat.pos.x, 3, this.boat.pos.z);
@@ -144,7 +169,7 @@ export class Game {
   /** Shows the active quest's introduction once. */
   private questIntro() {
     const q = currentQuest(this.save);
-    if (!q || this.save.quest.intro || this.ui.modal !== 'none') return;
+    if (!q || this.save.quest.intro || this.ui.modal !== 'none' || this.warp) return;
     this.unlockForUI();
     this.ui.dialog(NPCS[q.npc], q.intro, `NEW QUEST: ${q.title}`, () => {
       this.save.quest.intro = true;
@@ -156,7 +181,7 @@ export class Game {
 
   /** Completes the active quest if its goal is met, then plays the outro and the next intro. */
   private checkQuest() {
-    if (this.ui.modal !== 'none') return;
+    if (this.ui.modal !== 'none' || this.warp) return;
     const done = completeQuest(this.save);
     if (!done) { this.ui.quest(this.questInfo()); return; }
     this.audio.newSpecies();
@@ -169,7 +194,8 @@ export class Game {
     this.ui.dialog(NPCS[done.npc], done.outro, `QUEST COMPLETE: ${done.title}  ${reward}`, () => {
       this.input.lock();
       this.celebrate(checkAchievements(this.save));
-      if (!currentQuest(this.save)) this.ending();
+      if (done.after) this.ending(done.after);
+      else if (!currentQuest(this.save)) this.ending('finale');
       else setTimeout(() => this.questIntro(), 600);
     });
   }
@@ -181,11 +207,14 @@ export class Game {
     return { title: q.title, npc: NPCS[q.npc], value: st.value, goal: st.goal, step: this.save.quest.index + 1, total: QUESTS.length, money: q.goal.kind === 'sell' };
   }
 
-  private ending() {
-    this.fireworks = 12;
+  private ending(kind: 'teaser' | 'finale') {
+    this.fireworks = kind === 'finale' ? 20 : 12;
     this.audio.legendary();
     this.unlockForUI();
-    this.ui.ending(this.save, () => this.input.lock());
+    this.ui.ending(this.save, () => {
+      this.input.lock();
+      if (currentQuest(this.save)) setTimeout(() => this.questIntro(), 800);
+    }, kind);
   }
 
   private applySettings() {
@@ -313,8 +342,10 @@ export class Game {
           const tier = t.tiers[this.save.upgrades[id]];
           this.ui.toast(tier.name + '!', '#ffd23a', true, 'Upgrade installed');
           if (id === 'hull') {
-            const z = ZONES.find((zz) => zz.hull === this.stats.hull);
-            if (z) this.ui.toast(`${z.name} unlocked!`, '#7fe0ff');
+            const z = NAMED_ZONES.find((zz) => zz.hull === this.stats.hull);
+            const rl = REALMS.find((x) => x.hull === this.stats.hull && x.id !== 'blue');
+            if (rl) this.ui.toast(`The rift to ${rl.name} is open!`, '#e080ff', true, 'Sail through the swirling rift portal to cross over');
+            else if (z) this.ui.toast(`${z.name} unlocked!`, '#7fe0ff');
           }
           if (this.save.tutorial === 3) this.save.tutorial = 4;
           this.celebrate(checkAchievements(this.save));
@@ -371,10 +402,11 @@ export class Game {
       const d = pos.distanceXZ(here);
       list.push({ name, zone, pos, heading, cost: d < 50 ? 0 : Math.round((20 + d * 0.08 * (1 + progressLevel(this.save))) / 5) * 5, here: d < 50 });
     };
-    add('Harbor Tackle Shop', 'Sunny Shallows', this.scenery.dockSpot, 0);
+    const home = activeRealm() === 'blue' ? 'Sunny Shallows' : activeRealmInfo().name;
+    add(this.scenery.baseName, home, this.scenery.dockSpot, activeRealm() === 'blue' ? 0 : this.scenery.dockHeading);
     for (const o of this.scenery.outposts) {
       if (!this.save.outposts.includes(o.zone)) continue;
-      add(o.name, ZONES.find((z) => z.id === o.zone)!.name, o.dock, o.yaw + Math.PI / 2);
+      add(o.name, NAMED_ZONES.find((z) => z.id === o.zone)!.name, o.dock, o.yaw + Math.PI / 2);
     }
     return list;
   }
@@ -382,6 +414,216 @@ export class Game {
   private startTravel(to: Vec3, heading: number) {
     this.travel = { t: 0, to: to.clone(), heading };
     this.audio.whoosh();
+  }
+
+  // ------------------------------------------------------------------ realms
+  /** Swaps the whole world for another realm (terrain, height map, scenery, life, hot spots). */
+  private enterRealm(id: RealmId) {
+    setActiveRealm(id);
+    syncRealm();
+    let w = this.worlds.get(id);
+    if (!w) {
+      const heightmap = buildHeightMap();
+      const terrain = this.r.registerMesh(buildTerrainMesh());
+      w = { terrain, heightmap };
+      this.worlds.set(id, w);
+    }
+    if (!this.save.realms.includes(id)) this.save.realms.push(id);
+    if (!w.scenery) w.scenery = new Scenery(this.r, this.a, w.terrain, this.save.realms);
+    else w.scenery.buildPortals(this.save.realms);
+    this.r.setHeightMap(w.heightmap, 800);
+    this.scenery = w.scenery;
+    this.spots = new Hotspots();
+    this.life.setRealm(id, this.scenery);
+    this.events.clear();
+    this.effects.chum = null;
+    this.ui.resetMap();
+    this.save.realm = id;
+    // arrive just in front of the harbor gate, facing the harbor
+    const gate = this.scenery.portals.find((p) => p.kind === 'gate');
+    const at = gate ? gate.pos.clone().add(new Vec3(-gate.pos.x, 0, -gate.pos.z).normalize().scale(40)) : this.scenery.dockSpot.clone();
+    this.boat.pos.set(at.x, 0, at.z);
+    this.boat.heading = Math.atan2(-at.x, -at.z);
+    this.boat.speed = 8;
+    this.zone = zoneAt(at.x, at.z);
+    this.env.update(at.x, at.z, -1);
+    this.cam.yaw = this.boat.heading + Math.PI + 0.3;
+    this.cam.target.set(at.x, 3, at.z);
+    this.cam.desired.copy(this.cam.target);
+    this.audio.setMood(MOOD[this.zone.id]);
+    this.portalCool = 4;
+    this.persist();
+  }
+
+  private updatePortals(dt: number) {
+    this.portalCool -= dt;
+    this.portalHint = null;
+    for (const p of this.scenery.portals) {
+      const d = p.pos.distanceXZ(this.boat.pos);
+      if (d < 140) this.portalHint = p;
+      if (d > 12 || this.portalCool > 0) continue;
+      const away = this.boat.pos.clone().sub(p.pos).normalize();
+      if (p.kind === 'tear') {
+        const next = REALMS[REALMS.findIndex((r) => r.id === activeRealm()) + 1];
+        if (!next) continue;
+        if (this.stats.hull < next.hull) {
+          this.portalCool = 3;
+          this.boat.pos.addScaled(away, 10);
+          this.boat.speed = -6;
+          const hullName = TRACKS.find((t) => t.id === 'hull')!.tiers[next.hull]?.name ?? 'stronger';
+          this.ui.banner(next.name, 'THE RIFT IS UNSTABLE!', `Your hull can't survive the crossing. Buy the ${hullName} hull.`, true, 4500);
+          this.audio.warn();
+          this.cam.shake(0.8);
+          this.r.post.flash = [0.8, 0.4, 1, 0.4];
+          continue;
+        }
+        this.startWarp(next.id, true);
+      } else {
+        const others = this.save.realms.filter((r) => r !== activeRealm());
+        if (!others.length) continue;
+        this.portalCool = 3;
+        this.boat.speed = 0;
+        this.boat.pos.addScaled(away, 8);
+        this.unlockForUI();
+        this.ui.realmSelect(REALMS.map((r) => ({
+          id: r.id, name: r.name, numeral: r.numeral, tagline: r.tagline, color: r.color,
+          here: r.id === activeRealm(), open: this.save.realms.includes(r.id),
+        })), (id) => {
+          this.input.lock();
+          if (id && id !== activeRealm()) this.startWarp(id as RealmId, false);
+        });
+      }
+      return;
+    }
+  }
+
+  private startWarp(to: RealmId, tear: boolean) {
+    this.warp = { t: 0, to, switched: false, tear };
+    this.audio.warp();
+    this.audio.whoosh();
+    this.boat.speed = Math.max(this.boat.speed, 14);
+    this.fishing.cancelAim();
+  }
+
+  /** Being pulled through a rift: speed up, swirl, white out, swap realms, fade into the new world. */
+  private updateWarp(dt: number) {
+    const w = this.warp!;
+    w.t += dt;
+    const t = w.t;
+    const p = this.r.post;
+    const b = this.boat;
+    b.throttle = 1;
+    b.steer = 0;
+    b.update(dt, this.time, this.stats.boatSpeed * (w.switched ? 0.6 : 2), this.r.frame.waveScale, () => {});
+    if (!w.switched) {
+      p.warp = Math.min(1, t / 1.3);
+      p.fade = [1, 1, 1, clamp((t - 1.0) / 0.5, 0, 1)];
+      this.cam.fovTarget = 0.95 + Math.min(t, 1.5) * 0.55;
+      for (let i = 0; i < 20; i++) {
+        const a = Math.random() * Math.PI * 2, rr = 4 + Math.random() * 10;
+        this.fx.spawn({ x: b.pos.x + Math.cos(a) * rr, y: 1 + Math.random() * 8, z: b.pos.z + Math.sin(a) * rr, vx: -Math.sin(a) * 12, vy: 2, vz: Math.cos(a) * 12,
+          max: 0.6, size: 0.25, r: 1.2, g: 0.6, b: 1.6, a: 0, kind: 3 });
+      }
+      if (t >= 1.5) {
+        this.enterRealm(w.to);
+        w.switched = true;
+        w.t = 1.5;
+        this.lastTime = performance.now();
+      }
+    } else {
+      const k = (t - 1.5) / 1.8;
+      p.warp = Math.max(0, 1 - k * 1.2);
+      p.fade = [1, 1, 1, clamp(1 - k * 1.6, 0, 1)];
+      this.cam.fovTarget = 0.95 + Math.max(0, 1 - k) * 0.7;
+      if (t - dt < 1.75 && t >= 1.75) {
+        const info = realmById(w.to);
+        this.ui.banner(`REALM ${info.numeral}`, info.name.toUpperCase(), info.tagline, false, 6000);
+        this.audio.legendary();
+        this.audio.setMood(MOOD[this.zone.id]);
+        if (w.tear) this.fireworks = 6;
+        this.save.stats.realmJumps++;
+        this.celebrate(checkAchievements(this.save));
+        questEvent(this.save, { realm: w.to });
+      }
+      if (k >= 1) {
+        this.warp = null;
+        p.warp = 0;
+        p.fade = [0, 0, 0, 0];
+        this.checkQuest();
+        this.questIntro();
+      }
+    }
+    this.updateCamera(dt);
+    this.ambientFx(dt);
+    this.updateHud();
+  }
+
+  /** Spiral of light inside each rift portal. */
+  private drawPortals() {
+    const r = this.r;
+    const c = this.cam.pos;
+    const t = this.time;
+    for (const pt of this.scenery.portals) {
+      const d = pt.pos.distanceXZ(c);
+      if (d > 1400) continue;
+      const cx = pt.pos.x, cy = 13, cz = pt.pos.z;
+      const rx = Math.cos(pt.yaw), rz = -Math.sin(pt.yaw);
+      const [cr, cg, cb] = pt.color;
+      const n = d < 500 ? 140 : 60;
+      for (let i = 0; i < n; i++) {
+        const f = (i + 0.5) / n;
+        const rad = 12 * Math.sqrt(f);
+        const a = i * 2.39996 + t * (1.6 - f * 0.9);
+        const x = Math.cos(a) * rad, y = Math.sin(a) * rad;
+        const k = 0.6 + 0.4 * Math.sin(t * 3 + i);
+        r.particle(cx + rx * x, cy + y, cz + rz * x, 0.9 + (1 - f) * 1.4, cr * k, cg * k, cb * k, 0, i % 3 === 0 ? 3 : 0, a);
+      }
+      r.particle(cx, cy, cz, 16, cr * 0.25, cg * 0.25, cb * 0.25, 0, 0);
+      r.particle(cx, cy, cz, 6, cr * 0.5, cg * 0.5, cb * 0.5, 0, 0);
+    }
+  }
+
+  /** Realm-specific ambience: meteors, fel embers, star dust, neon sparks, comets. */
+  private realmFx(dt: number) {
+    if (this.camUnder) return;
+    const fx = this.fx;
+    const c = this.cam.pos;
+    switch (activeRealm()) {
+      case 'jurassic':
+        if (this.zone.id === 'crater' && Math.random() < dt * 1.2) {
+          const a = Math.random() * Math.PI * 2;
+          fx.spawn({ x: c.x + Math.cos(a) * 300, y: 260, z: c.z + Math.sin(a) * 300, vx: -Math.cos(a) * 120, vy: -90, vz: -Math.sin(a) * 120,
+            max: 2.2, size: 3, r: 2, g: 0.8, b: 0.3, a: 0, kind: 6, stretch: 14 });
+        }
+        if (this.r.frame.night > 0.4 && Math.random() < dt * 20) {
+          fx.spawn({ x: c.x + fx.rnd() * 60, y: 1 + Math.random() * 6, z: c.z + fx.rnd() * 60, vx: fx.rnd(), vy: fx.rnd() * 0.5, vz: fx.rnd(),
+            max: 3, size: 0.12, r: 1, g: 1.2, b: 0.3, a: 0, kind: 3 });
+        }
+        break;
+      case 'shattered':
+        for (let i = 0; i < 20 * dt; i++) fx.spawn({ x: c.x + fx.rnd() * 60, y: Math.random() * 10, z: c.z + fx.rnd() * 60, vx: fx.rnd(), vy: 1 + Math.random() * 2, vz: fx.rnd(),
+          max: 4, size: 0.12, r: 0.5, g: 1.4, b: 0.3, a: 0, kind: 3 });
+        break;
+      case 'selene':
+        for (let i = 0; i < 10 * dt; i++) fx.spawn({ x: c.x + fx.rnd() * 60, y: Math.random() * 20, z: c.z + fx.rnd() * 60, vy: 0.2, max: 5, size: 0.08, r: 0.8, g: 0.9, b: 1.2, a: 0, kind: 3 });
+        break;
+      case 'neon':
+        for (let i = 0; i < 12 * dt; i++) {
+          const pink = Math.random() < 0.5;
+          fx.spawn({ x: c.x + fx.rnd() * 60, y: 0.5 + Math.random() * 12, z: c.z + fx.rnd() * 60, vy: 0.6, max: 5, size: 0.14,
+            r: pink ? 1.5 : 0.2, g: pink ? 0.3 : 1.3, b: 1.5, a: 0, kind: 4 });
+        }
+        break;
+      case 'maw':
+        if (Math.random() < dt * 0.8) {
+          const a = Math.random() * Math.PI * 2;
+          fx.spawn({ x: c.x + Math.cos(a) * 400, y: 300 + Math.random() * 200, z: c.z + Math.sin(a) * 400, vx: -Math.cos(a) * 200, vy: -40, vz: -Math.sin(a) * 200,
+            max: 3, size: 4, r: 0.7, g: 0.9, b: 1.6, a: 0, kind: 6, stretch: 20 });
+        }
+        for (let i = 0; i < 12 * dt; i++) fx.spawn({ x: c.x + fx.rnd() * 60, y: Math.random() * 20, z: c.z + fx.rnd() * 60, vy: 0.3, max: 4, size: 0.1, r: 1, g: 0.6, b: 1.4, a: 0, kind: 3 });
+        break;
+      default: break;
+    }
   }
 
   private closeShop() {
@@ -452,7 +694,12 @@ export class Game {
 
   /** Title screen: a slow scenic tour of the world's landmarks. */
   private attractMode(dt: number) {
-    const VIEWS: [number, number, number, number, number, number][] = [
+    const portals = this.scenery.portals.map((p) => [p.pos.x, 13, p.pos.z, 2.4, 0.08, 90] as [number, number, number, number, number, number]);
+    const VIEWS: [number, number, number, number, number, number][] = activeRealm() !== 'blue' ? [
+      [this.scenery.dockSpot.x, 3, this.scenery.dockSpot.z, 0.9, 0.2, 30],
+      ...portals,
+      ...realmZones().map((z) => [z.x, 25, z.z, 1.2, 0.12, 260] as [number, number, number, number, number, number]),
+    ] : [
       // x, y, z of the target, yaw, pitch, distance
       [-9, 3, 91, 0.9, 0.22, 20],
       [-1030, 90, 150, 1.8, 0.05, 520],
@@ -482,6 +729,7 @@ export class Game {
     const inp = this.input;
     const f = this.fishing;
     const s = this.stats;
+    if (this.warp) { this.updateWarp(dt); return; }
     if (this.r.post.fade[3] > 0 && !this.travel) this.r.post.fade[3] = Math.max(0, this.r.post.fade[3] - dt * 2);
     if (inp.hit('KeyF')) this.togglePhoto();
     if (this.photo) {
@@ -499,7 +747,8 @@ export class Game {
       const range = this.effects.sonarUntil > this.time ? 99999 : [0, 400, 1400, 99999][s.finder];
       this.ui.openMap(this.boat.pos.x, this.boat.pos.z, this.boat.heading, s.hull,
         this.spots.spots.filter((h) => h.pos.distanceXZ(this.boat.pos) < range).map((h) => ({ x: h.pos.x, z: h.pos.z })), this.save.seenZones,
-        this.scenery.outposts.filter((o) => this.save.outposts.includes(o.zone)).map((o) => ({ x: o.pos.x, z: o.pos.z, name: o.name })), this.mapMarkers());
+        this.scenery.outposts.filter((o) => this.save.outposts.includes(o.zone)).map((o) => ({ x: o.pos.x, z: o.pos.z, name: o.name })), this.mapMarkers(),
+        { x: this.scenery.dockSpot.x, z: this.scenery.dockSpot.z });
       return;
     }
     if (inp.hit('KeyH')) this.audio.horn();
@@ -562,6 +811,7 @@ export class Game {
     const boost = this.effects.energyUntil > this.time ? 1.25 : 1;
     this.boat.update(dt, this.time, s.boatSpeed * boost, this.r.frame.waveScale, () => { this.audio.thud(); this.cam.shake(0.6); });
     this.resolveCollisions(dt);
+    if (f.state === 'idle' || f.state === 'aim') this.updatePortals(dt);
     this.boat.rodBend = damp(this.boat.rodBend, f.state === 'under' ? 0.15 + f.tension * 0.9 + f.hooked.length * 0.05 : 0.12, 6, dt);
 
     // ---- fishing
@@ -601,8 +851,10 @@ export class Game {
 
   /** Special minimap/map markers: treasure X and world events. */
   private mapMarkers() {
-    const out: { x: number; z: number; kind: 'x' | 'star' }[] = [];
-    if (this.save.treasureMap) out.push({ x: this.save.treasureMap.x, z: this.save.treasureMap.z, kind: 'x' });
+    const out: { x: number; z: number; kind: 'x' | 'star' | 'gate' | 'tear' }[] = [];
+    const tm = this.save.treasureMap;
+    if (tm && NAMED_ZONES.find((z) => z.id === tm.zone)?.realm === activeRealm()) out.push({ x: tm.x, z: tm.z, kind: 'x' });
+    for (const p of this.scenery.portals) out.push({ x: p.pos.x, z: p.pos.z, kind: p.kind });
     const e = this.events.active;
     if (e?.kind === 'frenzy') out.push({ x: e.pos.x, z: e.pos.z, kind: 'star' });
     return out;
@@ -632,10 +884,10 @@ export class Game {
   private updateTreasureMap() {
     const m = this.save.treasureMap;
     const f = this.fishing;
-    if (!m || f.state !== 'under') return;
+    if (!m || f.state !== 'under' || NAMED_ZONES.find((z) => z.id === m.zone)?.realm !== activeRealm()) return;
     if (Math.hypot(f.lure.x - m.x, f.lure.z - m.z) > 12) return;
     if (f.lure.y > heightAt(f.lure.x, f.lure.z) + 6) return;
-    const lvl = ZONES.find((z) => z.id === m.zone)?.level ?? 0;
+    const lvl = NAMED_ZONES.find((z) => z.id === m.zone)?.level ?? 0;
     const money = LEVEL_VALUE[lvl] * 60;
     this.save.treasureMap = null;
     this.save.money += money;
@@ -652,7 +904,7 @@ export class Game {
   }
 
   private makeTreasureMap() {
-    const open = ZONES.filter((z) => z.hull <= this.stats.hull && z.floorDepth <= this.stats.lineLength * 1.5);
+    const open = realmZones().filter((z) => z.hull <= this.stats.hull && z.floorDepth <= this.stats.lineLength * 1.5);
     const r = this.contractRand;
     for (let t = 0; t < 80; t++) {
       const zone = open[Math.floor(r() * open.length)];
@@ -674,11 +926,13 @@ export class Game {
     const fw = b.forward;
     const hull = [b.pos.clone().addScaled(fw, 2.2), b.pos.clone(), b.pos.clone().addScaled(fw, -2.2)];
     const obstacles: [number, number, number][] = [];
-    for (let z = 55; z <= 88; z += 3) obstacles.push([0, z, 2.4]);
-    for (let x = -4.5; x <= 4.5; x += 3) obstacles.push([x, 91, 3.2]);
+    if (activeRealm() === 'blue') {
+      for (let z = 55; z <= 88; z += 3) obstacles.push([0, z, 2.4]);
+      for (let x = -4.5; x <= 4.5; x += 3) obstacles.push([x, 91, 3.2]);
+    }
     for (const o of this.scenery.outposts) obstacles.push([o.pos.x, o.pos.z, 7.5]);
     for (const n of this.life.npcs) { obstacles.push([n.boat.pos.x + n.boat.forward.x * 2, n.boat.pos.z + n.boat.forward.z * 2, 1.8]); obstacles.push([n.boat.pos.x - n.boat.forward.x * 2, n.boat.pos.z - n.boat.forward.z * 2, 1.8]); }
-    const g = this.scenery.ghost.pos;
+    const g = activeRealm() === 'blue' ? this.scenery.ghost.pos : new Vec3(1e6, 0, 1e6);
     for (let k = -2; k <= 2; k++) {
       const hd = this.scenery.ghost.heading;
       obstacles.push([g.x + Math.sin(hd) * k * 5, g.z + Math.cos(hd) * k * 5, 4.5]);
@@ -993,8 +1247,9 @@ export class Game {
     }
     this.ui.setZone(this.zone.name);
     const w = zoneWeights(b.x, b.z);
-    ZONES.forEach((zn, i) => {
-      if (zn.hull <= this.stats.hull || w[i] < 0.12) return;
+    for (const i of realmZoneIdx()) {
+      const zn = NAMED_ZONES[i];
+      if (zn.hull <= this.stats.hull || w[i] < 0.12) continue;
       const away = new Vec3(b.x - zn.x, 0, b.z - zn.z).normalize();
       const push = (w[i] - 0.12) * 60;
       b.x += away.x * push * dt;
@@ -1006,7 +1261,7 @@ export class Game {
         this.audio.warn();
         this.cam.shake(0.3);
       }
-    });
+    }
     const r = Math.hypot(b.x, b.z);
     if (r > WORLD_R - 120) {
       const push = (r - (WORLD_R - 120)) * 0.8;
@@ -1124,11 +1379,13 @@ export class Game {
           vx: fw.z * side * 3 + fw.x * sp * 0.3, vy: 2 + sp * 0.12, vz: -fw.x * side * 3 + fw.z * sp * 0.3, max: 0.7, size: 0.2, r: 1, g: 1, b: 1, a: 0.9, kind: 4, gravity: 12 });
       }
     }
-    const vt = this.scenery.volcanoTop;
-    if (vt.distanceXZ(c) < 2600 && Math.random() < dt * 5) fx.smoke(vt.x, vt.y, vt.z, 0.22, 10);
-    if (vt.distanceXZ(c) < 2600 && Math.random() < dt * 8) fx.spawn({ x: vt.x + fx.rnd() * 8, y: vt.y, z: vt.z + fx.rnd() * 8, vx: fx.rnd() * 6, vy: 12 + Math.random() * 10, vz: fx.rnd() * 6, gravity: 9, max: 3, size: 1.2, r: 1, g: 0.4, b: 0.05, a: 0, kind: 0 });
+    for (const vt of this.scenery.volcanoTops) {
+      if (vt.distanceXZ(c) < 2600 && Math.random() < dt * 5) fx.smoke(vt.x, vt.y, vt.z, 0.22, 10);
+      if (vt.distanceXZ(c) < 2600 && Math.random() < dt * 8) fx.spawn({ x: vt.x + fx.rnd() * 8, y: vt.y, z: vt.z + fx.rnd() * 8, vx: fx.rnd() * 6, vy: 12 + Math.random() * 10, vz: fx.rnd() * 6, gravity: 9, max: 3, size: 1.2, r: 1, g: 0.4, b: 0.05, a: 0, kind: 0 });
+    }
+    this.realmFx(dt);
     const ft = this.scenery.factoryTop;
-    if (ft.distanceXZ(c) < 2500 && Math.random() < dt * 4) {
+    if (ft && ft.distanceXZ(c) < 2500 && Math.random() < dt * 4) {
       const k = Math.floor(Math.random() * 3);
       fx.spawn({ x: ft.x - 9 + k * 9 + fx.rnd(), y: 38, z: ft.z + 4, vx: 2, vy: 5, max: 8, size: 4, grow: 2.5, r: 0.35, g: 0.55, b: 0.2, a: 0.55, drag: 0.1 });
     }
@@ -1149,7 +1406,12 @@ export class Game {
         : '<br><small><kbd>Click</kbd> to capture the mouse for mouse look &nbsp; Zoom: wheel &nbsp; Items: <kbd>1</kbd>-<kbd>6</kbd></small>';
     if (f.state === 'idle') {
       let p = 'Hold <kbd>Click</kbd> or <kbd>Space</kbd> to cast';
-      if (this.dock) p = `<kbd>E</kbd> ${this.dock.kind === 'harbor' ? 'Tackle Shop' : this.dock.outpost.name} &nbsp; ` + p;
+      if (this.dock) p = `<kbd>E</kbd> ${this.dock.kind === 'harbor' ? this.scenery.baseName : this.dock.outpost.name} &nbsp; ` + p;
+      else if (this.portalHint) {
+        const next = REALMS[REALMS.findIndex((r) => r.id === activeRealm()) + 1];
+        p = this.portalHint.kind === 'gate' ? 'Sail into the <b>Rift Gate</b> to travel between realms &nbsp; ' + p
+          : next ? `Sail into the rift to reach <b>${next.name}</b>${this.stats.hull < next.hull ? ' (needs a stronger hull)' : ''} &nbsp; ` + p : p;
+      }
       else if (coolerFull) p = 'Cooler full! Sell at a dock or outpost &nbsp; ' + p;
       ui.prompt(p + look);
     } else if (f.state === 'aim') ui.prompt('Release to cast! <kbd>Esc</kbd> cancel');
@@ -1226,6 +1488,16 @@ export class Game {
     fr.oceanOffsetZ = Math.round(c.pos.z / 8) * 8;
     fr.mapExtent = MAP_R;
     fr.mapPower = MAP_POWER;
+    const planets = SKY_PLANETS[activeRealm()];
+    const setPlanet = (dst: number[], dstC: number[], p?: SkyPlanet) => {
+      if (!p) { dst[3] = 0; dstC[3] = 0; return; }
+      const l = Math.hypot(p[0], p[1], p[2]);
+      dst[0] = p[0] / l; dst[1] = p[1] / l; dst[2] = p[2] / l; dst[3] = p[3];
+      dstC[0] = p[4]; dstC[1] = p[5]; dstC[2] = p[6]; dstC[3] = p[7];
+    };
+    setPlanet(fr.planetA, fr.planetAColor, planets[0]);
+    setPlanet(fr.planetB, fr.planetBColor, planets[1]);
+    fr.lowGravity = realmById(activeRealm()).gravity < 0.9 ? 1 : 0;
     fr.boatX = this.boat.pos.x;
     fr.boatZ = this.boat.pos.z;
     fr.boatHeading = this.boat.heading;
@@ -1253,13 +1525,14 @@ export class Game {
     const drawFish = (actor: FishActor) => f.drawFish(r, this.a, actor, up);
     this.spots.draw(r, this.a, c.pos, this.time, drawFish);
     this.life.draw(r, this.a, c.pos, this.time, drawFish);
-    if (!this.camUnder && this.scenery.aquarium.pos.distanceXZ(c.pos) < 160) {
+    if (activeRealm() === 'blue' && !this.camUnder && this.scenery.aquarium.pos.distanceXZ(c.pos) < 160) {
       for (const af of this.aquarium.fish) drawFish(af);
       this.aquarium.drawWater(r, this.time);
     }
     for (const fl of this.flyers) if (fl.t >= 0) drawFish(fl.actor);
     for (const d of this.debugActors) drawFish(d);
     this.events.draw(r, this.time);
+    this.drawPortals();
     const tm = this.save.treasureMap;
     if (tm) {
       const d = Math.hypot(tm.x - c.pos.x, tm.z - c.pos.z);
@@ -1302,7 +1575,7 @@ export class Game {
     const night = this.r.frame.night;
     if (night > 0.2) {
       const top = this.scenery.lighthouseTop;
-      if (top.distanceXZ(c) < 3000) {
+      if (top && top.distanceXZ(c) < 3000) {
         const a = this.time * 0.8;
         const end = new Vec3(top.x + Math.cos(a) * 220, top.y - 8, top.z + Math.sin(a) * 220);
         ribbon(r, top, end, c, 6, [0.6 * night, 0.55 * night, 0.35 * night], 0, 14);
@@ -1332,7 +1605,7 @@ function statText(id: TrackId, tier: number): string {
     case 'lamp': return s.lampRadius ? `Lights up ${s.lampRadius}m` : 'Darkness';
     case 'finder': return ['Watch for gulls and bubbles', 'Nearby hot spots + sonar', 'Far hot spots + fish colors', 'Every hot spot + legend tracker'][s.finder ?? 0];
     case 'engine': return `Top speed ${s.boatSpeed} m/s`;
-    case 'hull': return ZONES.filter((z) => z.hull === s.hull).map((z) => z.name).join(', ') || 'Starter waters';
+    case 'hull': return NAMED_ZONES.filter((z) => z.hull === s.hull).map((z) => z.name).join(', ') || 'Starter waters';
     case 'cooler': return `Holds ${s.cooler} fish`;
   }
 }

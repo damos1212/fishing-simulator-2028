@@ -1,7 +1,7 @@
 // Fishing hot spots: bubbling water, circling gulls and jumping fish. Casting inside one
 // brings more fish and better odds for rare ones.
 import { SPECIES } from '../data/fish';
-import { ZONES, zoneWeights } from '../data/zones';
+import { NAMED_ZONES, realmZoneIdx, zoneWeights } from '../data/zones';
 import { mat4, rng, Vec3 } from '../engine/math';
 import { Inst, type Renderer } from '../engine/renderer';
 import { heightAt } from '../world/terrain';
@@ -26,11 +26,11 @@ export class Hotspots {
   private w: number[] = [];
 
   constructor() {
-    ZONES.forEach((_, zi) => { for (let k = 0; k < (zi === 0 ? 4 : 3); k++) this.spawn(zi, 0); });
+    for (const zi of realmZoneIdx()) for (let k = 0; k < (zi === 0 ? 4 : 3); k++) this.spawn(zi, 0);
   }
 
   private spawn(zi: number, now: number) {
-    const zn = ZONES[zi];
+    const zn = NAMED_ZONES[zi];
     for (let tries = 0; tries < 40; tries++) {
       const a = this.rand() * Math.PI * 2, d = Math.sqrt(this.rand()) * zn.radius * 0.85;
       const x = zn.x + Math.cos(a) * d, z = zn.z + Math.sin(a) * d;
@@ -68,7 +68,7 @@ export class Hotspots {
       const near = this.spots.filter((h) => h.pos.distanceXZ(cam) < 450);
       if (near.length) {
         const h = near[Math.floor(this.rand() * near.length)];
-        const pool = SPECIES.filter((s) => s.zone === ZONES[h.zone].id && !s.hazard && s.model !== 'jelly' && s.size < 3);
+        const pool = SPECIES.filter((s) => s.zone === NAMED_ZONES[h.zone].id && !s.hazard && s.model !== 'jelly' && s.size < 3);
         const sp = pool[Math.floor(this.rand() * pool.length)];
         if (sp) {
           const a = this.rand() * Math.PI * 2, rr = this.rand() * h.radius * 0.6;

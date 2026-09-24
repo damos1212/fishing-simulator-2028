@@ -283,3 +283,21 @@ html, body { margin: 0; height: 100%; overflow: hidden; background: #0b1f33; fon
 #ending .btn { align-self: center; margin-top: 8px; }
 .mastered { font-family: 'Lilita One'; font-size: 14px; color: #fff; background: linear-gradient(#ffd23a, #e09000); border: 2px solid var(--ink); border-radius: 8px; padding: 1px 8px; vertical-align: middle; }
 #pause .gq { margin-left: auto; color: #c05a00; font-family: "Lilita One"; font-weight: 400; }
+
+/* ---------- realms */
+#realms .panel { width: min(760px, 92vw); padding: 20px 24px; gap: 12px; text-align: center; animation: slam .45s cubic-bezier(.2,1.6,.4,1); }
+#realms .sub { font-weight: 800; opacity: .75; }
+#realms .realms { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+#realms .realm { pointer-events: auto; cursor: pointer; display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 12px 8px; border: 4px solid var(--ink);
+  border-radius: 16px; background: linear-gradient(160deg, color-mix(in srgb, var(--c) 45%, #fff6dc), #fff6dc); box-shadow: 0 5px 0 var(--ink); font-family: Nunito; transition: transform .1s; }
+#realms .realm:hover:not(:disabled) { transform: translateY(-3px) scale(1.03); }
+#realms .realm .num { font-size: 34px; color: var(--c); text-shadow: 2px 2px 0 var(--ink), -2px -2px 0 var(--ink), 2px -2px 0 var(--ink), -2px 2px 0 var(--ink); }
+#realms .realm b { font-size: 18px; font-weight: 400; }
+#realms .realm small { font-weight: 800; font-size: 12px; opacity: .8; }
+#realms .realm.here { box-shadow: 0 0 0 4px var(--gold), 0 5px 0 var(--ink); cursor: default; }
+#realms .realm.locked { filter: grayscale(1) brightness(.7); cursor: not-allowed; }
+#realms .btn { align-self: center; }
+.subtabs .tab.dim { opacity: .5; }
+.subtabs.realmtabs .tab small { opacity: .7; font-family: Nunito; font-weight: 800; }
+#ending .tease { color: #8a4ad0; font-size: 20px; line-height: 1.3; }
+#shop .more { text-align: center; font-weight: 900; opacity: .6; font-size: 13px; }

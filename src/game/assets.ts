@@ -4,10 +4,12 @@ import { buoyMesh, flagMesh, kelpMesh, palmMesh, planetMesh, reelMesh, rodSegmen
 import type { GpuMesh, GpuModel, Renderer } from '../engine/renderer';
 
 const ARCHETYPES: Archetype[] = ['slim', 'tall', 'round', 'eel', 'shark', 'ray', 'jelly', 'squid', 'angler', 'whale', 'sword', 'eyeball',
-  'crab', 'lobster', 'turtle', 'octopus', 'seahorse', 'starfish', 'serpent', 'dolphin', 'boot', 'bottle', 'duck'];
+  'crab', 'lobster', 'turtle', 'octopus', 'seahorse', 'starfish', 'serpent', 'dolphin', 'boot', 'bottle', 'duck',
+  'ammonite', 'trilobite', 'plesio', 'mosasaur', 'dunkle', 'anomalo', 'bonefish', 'crystalfish', 'drake', 'robo', 'pixel'];
 const MODELS = ['boat', 'fisher', 'lure', 'pier', 'shop', 'lighthouse', 'rock', 'coral', 'iceberg', 'pillar', 'tentacle', 'crystal', 'gull', 'chest',
   'shipwreck', 'ghostship', 'skullrock', 'barrel', 'factory', 'lollipop', 'candycane', 'gumdrop', 'icecream', 'dome', 'statue', 'arch', 'spire',
-  'outpost', 'aquarium', 'shell', 'anchor', 'hats', 'pets'] as const;
+  'outpost', 'aquarium', 'shell', 'anchor', 'hats', 'pets', 'portal', 'fern', 'brachio', 'ptero', 'bones', 'floatrock', 'moonbase',
+  'neonprops'] as const;
 export type ModelName = (typeof MODELS)[number];
 
 export interface Assets {
