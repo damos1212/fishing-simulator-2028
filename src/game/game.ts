@@ -1,7 +1,7 @@
 // Orchestrates the whole game: modes, input, simulation, camera, HUD and rendering.
 import { BOSS_FOR_ZONE, RARITY_COLOR, speciesById } from '../data/fish';
 import { cosmeticById, itemById, itemPrice, ITEMS, type ItemId } from '../data/items';
-import { LEVEL_VALUE, nicePrice, TRACKS, type Stats, type TrackId } from '../data/upgrades';
+import { LEVEL_VALUE, nicePrice, payUnit, TRACKS, type Stats, type TrackId } from '../data/upgrades';
 import {
   activeRealm, activeRealmInfo, NAMED_ZONES, type RealmId, realmById, REALMS, realmZoneIdx, realmZones, setActiveRealm, type Zone, type ZoneId,
   zoneAt, zoneWeights,
@@ -19,7 +19,7 @@ import { GameAudio, type Mood } from './audio';
 import { Boat } from './boat';
 import { CameraRig } from './camera';
 import {
-  buy, buyCosmetic, buyItem, buyPerk, type CaughtFish, computeStats, coolerValue, equipCosmetic, formatMoney, landCatch, masteredZones, perkRank, perkValue, progressLevel,
+  buy, buyCosmetic, buyItem, buyPerk, type CaughtFish, computeStats, coolerValue, equipCosmetic, formatMoney, landCatch, masteredZones, nextTier, perkRank, perkValue, progressLevel,
   type SaveData, sellAll, SHINY_VALUE, useItem,
 } from './economy';
 import { NPCS, QUESTS } from '../data/quests';
@@ -46,7 +46,9 @@ const MOOD: Record<ZoneId, Mood> = {
   mopen: 'cosmic', rim: 'cosmic', maw: 'eerie',
 };
 
-interface Flyer { actor: FishActor; t: number; from: Vec3; local: Vec3; spin: number }
+/** Lifetime earnings that get a little celebration. */
+const MONEY_MILESTONES = [1e3, 1e4, 1e5, 1e6, 1e7, 1e8, 1e9, 1e10, 1e11, 1e12];
+interface Flyer { actor: FishActor; t: number; from: Vec3; local: Vec3; spin: number; value: number; landed: boolean }
 type SkyPlanet = [dx: number, dy: number, dz: number, radius: number, r: number, g: number, b: number, style: number];
 /** Planets hanging in each realm's sky (style: 1 earth, 2 gas giant, 3 cracked fel world, 4 moon, 5 ringed). */
 const SKY_PLANETS: Record<RealmId, SkyPlanet[]> = {
@@ -293,7 +295,29 @@ export class Game {
     this.ui.setCooler(this.save.cooler.length, this.stats.cooler);
     this.ui.inventory(this.save.inventory, this.effectsList());
     this.ui.contracts(this.save.contracts);
+    // the next hull is the big goal: show what it opens and how close you are
+    const nh = nextTier(this.save, 'hull');
+    const opens = nh ? NAMED_ZONES.find((z) => z.hull === this.save.upgrades.hull + 1) : null;
+    let sub = opens ? `Opens ${opens.name}` : '';
+    if (opens && this.stats.baitTier < opens.level - 1) {
+      const bait = TRACKS.find((t) => t.id === 'bait')!.tiers[opens.level - 1];
+      if (bait) sub += ` (its fish want ${bait.name})`;
+    }
+    this.ui.goal(nh && opens ? { title: nh.name, sub, cost: nh.cost, money: this.save.money + coolerValue(this.save) } : null);
+    // money milestones
+    const m = this.save.stats.earned;
+    while (m >= MONEY_MILESTONES[this.milestone] && this.milestone < MONEY_MILESTONES.length) {
+      if (this.moneyMilestonesArmed) {
+        this.ui.toast(`${formatMoney(MONEY_MILESTONES[this.milestone])} EARNED!`, '#7fff8a', true, 'Keep it up, captain!');
+        this.fireworks = Math.max(this.fireworks, 2);
+        this.audio.upgrade();
+      }
+      this.milestone++;
+    }
+    this.moneyMilestonesArmed = true;
   }
+  private milestone = 0;
+  private moneyMilestonesArmed = false;
 
   private effectsList() {
     const out: { label: string; color: string }[] = [];
@@ -320,6 +344,11 @@ export class Game {
   private tourney: Tournament | null = null;
   private catchLog: { t: number; n: number; value: number; len: number }[] = [];
   private lastPitch = 0;
+  private lastNotice = 0;
+  private landedCount = 0;
+  /** Freeze-frame on a bite (real seconds). */
+  private hitStop = 0;
+  private dangerBeat = 0;
   private wasUnder = false;
   private underTime = 0;
   private lastUnderTime = 0;
@@ -383,7 +412,8 @@ export class Game {
       },
       buy: (id: TrackId) => {
         if (buy(this.save, id)) {
-          this.audio.buy();
+          this.audio.upgrade();
+          this.ui.confetti(window.innerWidth * 0.62, window.innerHeight * 0.42);
           this.applyUpgrades();
           const t = TRACKS.find((x) => x.id === id)!;
           const tier = t.tiers[this.save.upgrades[id]];
@@ -392,7 +422,8 @@ export class Game {
             const z = NAMED_ZONES.find((zz) => zz.hull === this.stats.hull);
             const rl = REALMS.find((x) => x.hull === this.stats.hull && x.id !== 'blue');
             if (rl) this.ui.toast(`The rift to ${rl.name} is open!`, '#e080ff', true, 'Sail through the swirling rift portal to cross over');
-            else if (z) this.ui.toast(`${z.name} unlocked!`, '#7fe0ff');
+            else if (z) this.ui.banner('New waters', `${z.name.toUpperCase()} UNLOCKED`, z.tagline, false, 4200, 'rainbow');
+            this.fireworks = Math.max(this.fireworks, 3);
           }
           if (this.save.tutorial === 3) this.save.tutorial = 4;
           this.celebrate(checkAchievements(this.save));
@@ -463,8 +494,8 @@ export class Game {
     this.ui.openShop(this.save, hs);
   }
 
-  private rerollCost() { return nicePrice(LEVEL_VALUE[progressLevel(this.save)] * 2); }
-  private tourneyFee() { return nicePrice(LEVEL_VALUE[progressLevel(this.save)] * 1.5); }
+  private rerollCost() { return nicePrice(payUnit(progressLevel(this.save)) * 2); }
+  private tourneyFee() { return nicePrice(payUnit(progressLevel(this.save)) * 5); }
 
   /** The player's recent pace (last 10 minutes of landed catches), used to set tournament rivals. */
   private form(): Form {
@@ -821,7 +852,8 @@ export class Game {
     // slow motion on big bites
     this.slowmo = Math.max(0, this.slowmo - realDt);
     this.timeScale = damp(this.timeScale, this.slowmo > 0 ? 0.3 : 1, 8, realDt);
-    const dt = realDt * this.timeScale;
+    this.hitStop = Math.max(0, this.hitStop - realDt);
+    const dt = realDt * this.timeScale * (this.hitStop > 0 ? 0.06 : 1);
     if (this.fireworks > 0) this.fireworksFx(realDt);
     const inp = this.input;
     this.fpsAcc.t += dt; this.fpsAcc.n++;
@@ -944,6 +976,7 @@ export class Game {
         this.boat.pos.copy(this.travel.to);
         this.boat.heading = this.travel.heading;
         this.boat.speed = 0;
+        this.r.resetHistory();
         this.cam.yaw = this.boat.heading + Math.PI + 0.4;
         this.cam.target.set(this.boat.pos.x, 3, this.boat.pos.z);
         this.env.update(this.boat.pos.x, this.boat.pos.z, -1);
@@ -977,7 +1010,7 @@ export class Game {
           if (this.save.tutorial === 0) this.save.tutorial = 1;
           this.boat.armTarget = 0.7;
           this.swingT = 0.35;
-          this.audio.cast();
+          this.audio.cast(f.power);
           this.boat.rodBend = -0.3;
           this.refreshHud();
         }
@@ -999,6 +1032,10 @@ export class Game {
 
     // ---- fishing
     f.update(dt, this.fishCtx());
+    // heartbeat while the line is about to go
+    this.dangerBeat -= dt;
+    if (f.state === 'under' && f.fighting && f.tension > 0.82 && this.dangerBeat <= 0) { this.dangerBeat = 0.55; this.audio.heartbeat(); }
+    if (f.state === 'idle') this.landedCount = 0;
     this.handleFishingEvents();
     this.updateDepths(dt);
 
@@ -1106,7 +1143,7 @@ export class Game {
         case 'win': {
           const lvl = progressLevel(this.save);
           const tamer = perkValue(this.save, 'kraken');
-          const cash = Math.round(LEVEL_VALUE[Math.min(lvl, LEVEL_VALUE.length - 1)] * 4 * (1 + tamer * 0.5));
+          const cash = nicePrice(payUnit(lvl) * 25 * (1 + tamer * 0.5));
           const pearls = 6 + tamer * 3;
           this.save.money += cash;
           this.save.stats.earned += cash;
@@ -1359,6 +1396,14 @@ export class Game {
           this.audio.bite();
           this.audio.hooked();
           this.fx.burst(e.fish.pos, [1, 0.9, 0.4], 18, 3, 0.25);
+          // freeze-frame, a camera punch and a ring in the rarity colour: bigger fish, bigger bite
+          const tier = { common: 0, uncommon: 1, rare: 2, epic: 3, legendary: 4, boss: 4 }[sp.rarity] ?? 0;
+          this.hitStop = Math.max(this.hitStop, 0.035 + tier * 0.025);
+          this.cam.fov += 0.03 + tier * 0.02;
+          this.cam.shake(0.12 + tier * 0.1);
+          const rc = hex(RARITY_COLOR[sp.rarity]);
+          this.fx.spawn({ x: e.fish.pos.x, y: e.fish.pos.y, z: e.fish.pos.z, max: 0.45, size: 0.6 + tier * 0.3, grow: 5 + tier * 2, r: rc[0] * 2, g: rc[1] * 2, b: rc[2] * 2, a: 0, kind: 1 });
+          if (tier >= 2) this.fx.burst(e.fish.pos, [rc[0], rc[1], rc[2]], 20 + tier * 10, 4 + tier, 0.3);
           const sc = this.screenPos(e.fish.pos);
           this.ui.floater(sc.x, sc.y - 30, sp.name, RARITY_COLOR[sp.rarity]);
           this.boat.petBounce = 0.5;
@@ -1394,6 +1439,10 @@ export class Game {
             this.cam.shake(1);
             this.r.post.flash = [1, 0.3, 0.2, 0.3];
             this.save.stats.snapped++;
+          } else if (e.by === 'shake') {
+            this.ui.toast('IT GOT AWAY!', '#ffb070', true, `${n} shook the hook on a slack line`);
+            this.audio.warn();
+            this.cam.shake(0.4);
           } else if (e.by === 'sting') {
             this.ui.toast('ZAPPED!', '#ff8fc8', false, `Lost your ${n}`);
             this.audio.sting();
@@ -1405,6 +1454,19 @@ export class Game {
             this.cam.shake(0.7);
             this.save.stats.stolen++;
           }
+          break;
+        }
+        case 'slack':
+          this.ui.toast('SLACK LINE!', '#ffd23a', false, 'Reel in or it will shake the hook!');
+          this.audio.warn();
+          break;
+        case 'notice': {
+          // a fish turns towards the lure: a little "!" pops over it
+          if (this.time - this.lastNotice < 0.25) break;
+          this.lastNotice = this.time;
+          const sc = this.screenPos(e.fish.pos.clone().add(new Vec3(0, e.fish.length * 0.4 + 0.6, 0)));
+          if (!sc.behind) this.ui.floater(sc.x, sc.y, '!', RARITY_COLOR[e.fish.sp.rarity], true);
+          if (e.fish.sp.rarity !== 'common') this.audio.notice(e.fish.sp.rarity === 'legendary' ? 2 : e.fish.sp.rarity === 'epic' || e.fish.sp.rarity === 'rare' ? 1 : 0);
           break;
         }
         case 'needBait':
@@ -1444,7 +1506,8 @@ export class Game {
           const star = e.actors.find((a) => a.sp.boss || a.sp.rarity === 'legendary');
           if (star) this.trophy = { actor: star, t: -0.6 };
           e.actors.forEach((a, i) => {
-            this.flyers.push({ actor: a, t: -i * 0.12, from: a.pos.clone(), local: new Vec3((Math.random() - 0.5) * 1.4, 1.1, -1.4 - Math.random() * 1.4), spin: Math.random() * 6 });
+            this.flyers.push({ actor: a, t: -i * 0.12, from: a.pos.clone(), local: new Vec3((Math.random() - 0.5) * 1.4, 1.1, -1.4 - Math.random() * 1.4), spin: Math.random() * 6,
+              value: e.catches[i]?.value ?? 0, landed: false });
           });
           this.pendingLand = { catches: e.catches, delay: 1.3 + e.actors.length * 0.12, maxDepth: e.maxDepth, zone: e.zone };
           if (e.catches.length && this.save.goldenHook) { this.save.goldenHook = false; this.ui.toast('Golden Hook: double value!', '#ffb020'); }
@@ -1470,6 +1533,15 @@ export class Game {
         fl.actor.dir.set(Math.sin(fl.spin + fl.t * 9), Math.cos(fl.t * 7), Math.cos(fl.spin + fl.t * 9)).normalize();
       } else {
         const ft = fl.t - 0.9;
+        if (!fl.landed) {
+          // thump on the deck: a price tag pops out, each one a little higher in pitch
+          fl.landed = true;
+          const sc = this.screenPos(target.clone().add(new Vec3(0, 1.5, 0)));
+          if (!sc.behind && fl.value > 0) this.ui.floater(sc.x + (Math.random() - 0.5) * 40, sc.y, `+${formatMoney(fl.value)}`, RARITY_COLOR[fl.actor.sp.rarity]);
+          this.audio.thump(this.landedCount++);
+          this.fx.splash(target.clone(), 0.15);
+          if (big) this.cam.shake(0.5);
+        }
         fl.actor.pos.copy(target);
         if (big) fl.actor.pos.y += fl.actor.length * 0.25;
         fl.actor.pos.y += Math.abs(Math.sin(ft * 9)) * 0.4 * Math.max(0, 1 - ft / 1.6);
@@ -1539,7 +1611,15 @@ export class Game {
       this.audio.setMood(MOOD[z.id]);
       if (z.id !== 'open' && !this.save.seenZones.includes(z.id)) {
         this.save.seenZones.push(z.id);
+        // first visit: a discovery bonus to get started in the new waters
+        const bonus = nicePrice(payUnit(z.level) * 8);
+        this.save.money += bonus;
+        this.save.stats.earned += bonus;
+        this.save.pearls += 2;
+        this.ui.toast('DISCOVERY BONUS!', '#7fe0ff', true, `+${formatMoney(bonus)} and 2 pearls for charting ${z.name}`);
+        this.audio.treasure();
         this.celebrate(checkAchievements(this.save));
+        this.refreshHud();
       }
     }
     for (const o of this.scenery.outposts) {
@@ -1728,6 +1808,18 @@ export class Game {
           fx.spawn({ x: c.x + fx.rnd() * 30, y: c.y + 8 + Math.random() * 8, z: c.z + fx.rnd() * 30, vx: 2 * this.tw.storm, vy: -22, max: 0.9, size: 0.02, r: 0.75, g: 0.8, b: 0.9, a: 0.5, kind: 6, stretch: 20 });
         }
       }
+      // hooked fish thrash as they are dragged up to the surface
+      const fsh = this.fishing;
+      if (fsh.state === 'under' && fsh.hooked.length && fsh.reeling && fsh.lure.y > -2.5 && Math.random() < dt * 14) {
+        const lp = fsh.lure;
+        fx.splash(new Vec3(lp.x + fx.rnd(), 0, lp.z + fx.rnd()), 0.25 + Math.min(fsh.hooked.length, 6) * 0.05);
+        if (Math.random() < 0.3) this.audio.splash(0.2);
+      }
+      // gentle rings around the hull while bobbing at rest
+      if (Math.abs(this.boat.speed) < 1 && Math.random() < dt * 0.9) {
+        const bp = this.boat.pos;
+        fx.spawn({ x: bp.x + fx.rnd() * 2, y: 0.05, z: bp.z + fx.rnd() * 3, max: 2.2, size: 2.5, grow: 2.5, r: 1, g: 1, b: 1, a: 0.25, kind: 2 });
+      }
       // spray blown off the lips of breakers on nearby beaches
       if (this.r.frame.breakers > 0) {
         for (let k = 0; k < 24; k++) {
@@ -1847,6 +1939,7 @@ export class Game {
     ui.hooks(under || f.state === 'landing', f.hooked.map((h) => h.sp.colors[0]), Math.max(s.hooks, f.hooked.length));
     const fighting = under && f.fighting;
     ui.tension(!!fighting, f.tension, fighting ? f.fighting!.stamina : 1, fighting ? f.fighting!.sp.name : '', fighting ? f.fighting!.pull : 0, f.countering);
+    ui.danger(fighting ? clamp((f.tension - 0.72) / 0.25, 0, 1) : 0);
     ui.boss(under && f.boss && !f.boss.gone ? { name: f.boss.sp.name, hp: f.boss.hooked ? f.boss.stamina : 1, enrage: f.boss.enrage, surge: f.boss.surgeT >= 0 } : null);
     ui.clock(this.tw.clock(), this.tw.effective(), this.tw.isNight);
     const range = this.effects.sonarUntil > this.time ? 99999 : [0, 400, 1400, 99999][s.finder];
@@ -1951,6 +2044,8 @@ export class Game {
     const lens = r.lens;
     this.underTime = this.camUnder ? this.underTime + dt : 0;
     if (this.wasUnder && !this.camUnder && this.lastUnderTime > 0.6 && this.fishing.state !== 'idle') { lens.drops = 1; lens.dropTime = 0; }
+    // light shafts, marine snow and plankton belong to the underwater view only
+    if (this.wasUnder && !this.camUnder) this.fx.clearBelow(-1.5);
     if (this.camUnder) this.lastUnderTime = this.underTime;
     this.wasUnder = this.camUnder;
     lens.dropTime += dt;

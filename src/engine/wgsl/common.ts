@@ -430,6 +430,25 @@ fn shadowPCSS(wp: vec3f, texel: f32) -> f32 {
   }
   return s / 12.0;
 }
+/** Cheap sun visibility for large surfaces like the sea: 4 taps in the cascade that covers the point. */
+fn sunShadowLite(wp: vec3f) -> f32 {
+  if (frame.shadow.x < 0.5) { return 1.0; }
+  for (var c = 0; c < 2; c++) {
+    if (c == 1 && frame.shadow.w < 1.5) { break; }
+    var p: vec4f;
+    if (c == 0) { p = frame.sunVP0 * vec4f(wp, 1.0); } else { p = frame.sunVP1 * vec4f(wp, 1.0); }
+    let uv = p.xy * vec2f(0.5, -0.5) + 0.5;
+    if (any(uv < vec2f(0.001)) || any(uv > vec2f(0.999)) || p.z >= 1.0 || p.z <= 0.0) { continue; }
+    let z = p.z - select(0.0006, 0.0012, c == 1);
+    let o = frame.shadow.y * 1.5;
+    var s = textureSampleCompareLevel(shadowTex, shadowSamp, uv + vec2f(o, o), c, z);
+    s += textureSampleCompareLevel(shadowTex, shadowSamp, uv + vec2f(-o, o), c, z);
+    s += textureSampleCompareLevel(shadowTex, shadowSamp, uv + vec2f(o, -o), c, z);
+    s += textureSampleCompareLevel(shadowTex, shadowSamp, uv - vec2f(o, o), c, z);
+    return mix(1.0, s * 0.25, frame.shadow.z);
+  }
+  return 1.0;
+}
 /** Sun visibility (1 lit, 0 shadowed) from the cascaded shadow maps. */
 fn sunShadow(wp: vec3f, n: vec3f) -> f32 {
   if (frame.shadow.x < 0.5) { return 1.0; }
@@ -437,7 +456,8 @@ fn sunShadow(wp: vec3f, n: vec3f) -> f32 {
   let slope = clamp(1.0 - abs(ndl), 0.0, 1.0);
   let texel = frame.shadow.y;
   var s: f32;
-  if (frame.ssao.z > 0.5) { s = shadowPCSS(wp + n * (0.04 + 0.12 * slope), texel); }
+  // soft contact-hardening shadows near the camera, plain filtering further away
+  if (frame.ssao.z > 0.5 && distance(wp, frame.camPos.xyz) < 45.0) { s = shadowPCSS(wp + n * (0.04 + 0.12 * slope), texel); }
   else { s = shadowCascade(wp + n * (0.04 + 0.12 * slope), 0, texel); }
   if (s < 0.0 && frame.shadow.w > 1.5) { s = shadowCascade(wp + n * (0.25 + 0.8 * slope), 1, texel); }
   if (s < 0.0) { return 1.0; }

@@ -82,7 +82,7 @@ export class UI {
       <div id="money" class="chip"><div class="coin">$</div><span>$0</span></div>
       <div id="pearls" class="chip"><div class="pearl"></div><span>0</span></div>
       <div id="cooler" class="chip"><span>Cooler 0/6</span></div>
-      <div id="leftcol"><div id="quest" class="hidden"></div><div id="contracts"></div></div>
+      <div id="leftcol"><div id="goal" class="hidden"></div><div id="quest" class="hidden"></div><div id="contracts"></div></div>
       <div id="zoneName" class="chip"><span></span></div>
       <div id="clock" class="chip"><span class="w"></span><span class="t">06:00</span></div>
       <div id="minimap"><canvas width="380" height="380"></canvas></div>
@@ -94,7 +94,7 @@ export class UI {
       <div id="power" class="hidden"><s></s><i></i><b>POWER</b></div>
       <div id="depth" class="hidden"><div class="cap display outlined">DEPTH</div><div class="bar"><div class="lim"></div><div class="pin"></div></div><div class="val display outlined">0m</div></div>
       <div id="hooks" class="hidden"></div>
-      <div id="tension" class="hidden"><div class="label display outlined">FIGHT!</div><div class="pull display outlined"></div><div class="track"><div class="needle"></div></div><div class="stam"><i></i></div></div>
+      <div id="tension" class="hidden"><div class="label display outlined">FIGHT!</div><div class="pull display outlined"></div><div class="track"><div class="slackzone"></div><div class="needle"></div></div><div class="stam"><i></i></div></div>
       <div id="sonar" class="hidden"><div class="h"><span>SONAR</span><span class="d"></span></div><canvas width="420" height="160"></canvas><div class="info"></div></div>
       <div id="items"></div>
       <div id="legend" class="hidden"><div class="arrow">&#9650;</div></div>
@@ -148,7 +148,27 @@ export class UI {
   error(msg: string) { this.root.appendChild(h(`<div id="err"><div><div class="display" style="font-size:40px">Oh no!</div>${esc(msg)}<br><br>This game needs a browser with WebGPU (current Chrome, Edge or Safari).</div></div>`)); }
 
   // ------------------------------------------------------------------ HUD
-  setMoney(v: number) { (this.el.money.querySelector('span') as HTMLElement).textContent = formatMoney(v); }
+  /** The money counter rolls up to the new amount instead of jumping. */
+  private shownMoney = -1;
+  private moneyTarget = 0;
+  private moneyAnim = 0;
+  setMoney(v: number) {
+    const span = this.el.money.querySelector('span') as HTMLElement;
+    if (this.shownMoney < 0 || v < this.shownMoney) { this.shownMoney = v; this.moneyTarget = v; span.textContent = formatMoney(v); return; }
+    if (v === this.moneyTarget) return;
+    this.moneyTarget = v;
+    if (v > this.shownMoney) { this.el.money.classList.remove('bump'); void this.el.money.offsetWidth; this.el.money.classList.add('bump'); }
+    cancelAnimationFrame(this.moneyAnim);
+    const from = this.shownMoney, t0 = performance.now(), dur = Math.min(900, 250 + Math.log10(Math.max(v - from, 1)) * 90);
+    const step = (now: number) => {
+      const k = Math.min(1, (now - t0) / dur);
+      const e = 1 - Math.pow(1 - k, 3);
+      this.shownMoney = k >= 1 ? v : from + (v - from) * e;
+      span.textContent = formatMoney(this.shownMoney);
+      if (k < 1) this.moneyAnim = requestAnimationFrame(step);
+    };
+    this.moneyAnim = requestAnimationFrame(step);
+  }
   setPearls(v: number) { (this.el.pearls.querySelector('span') as HTMLElement).textContent = String(v); }
   setCooler(n: number, max: number) {
     (this.el.cooler.querySelector('span') as HTMLElement).textContent = `Cooler ${n}/${max}`;
@@ -220,7 +240,8 @@ export class UI {
     if (!show) return;
     (el.querySelector('.needle') as HTMLElement).style.left = `calc(${clamp(t, 0, 1) * 100}% - 4px)`;
     (el.querySelector('.stam i') as HTMLElement).style.width = `${stamina * 100}%`;
-    el.querySelector('.label')!.textContent = t > 0.8 ? 'EASE OFF!' : `FIGHT! ${name}`;
+    el.querySelector('.label')!.textContent = t > 0.8 ? 'EASE OFF!' : t < 0.08 ? 'SLACK - REEL!' : `FIGHT! ${name}`;
+    el.classList.toggle('slack', t < 0.08);
     const pl = el.querySelector('.pull') as HTMLElement;
     pl.innerHTML = pull < 0 ? `&#11013; PULLING LEFT - hold <kbd>D</kbd>` : pull > 0 ? `PULLING RIGHT - hold <kbd>A</kbd> &#10145;` : '';
     pl.classList.toggle('good', counter > 0);
@@ -279,6 +300,20 @@ export class UI {
       <div class="qt">${esc(q.title)}</div>${q.goal > 1 ? `<div class="cp"><i style="width:${(v / q.goal) * 100}%"></i></div>` : ''}<small>${count}${count ? ' &middot; ' : ''}${esc(q.npc.name)}</small>`;
     if (el.innerHTML !== html) el.innerHTML = html;
   }
+  /** The next big milestone (a hull and the waters it opens) with a savings bar. */
+  goal(g: { title: string; sub: string; cost: number; money: number } | null) {
+    const el = this.root.querySelector('#goal') as HTMLElement;
+    if (!el) return;
+    el.classList.toggle('hidden', !g);
+    if (!g) return;
+    const k = clamp(g.money / g.cost, 0, 1);
+    const key = `${g.title}|${Math.round(k * 200)}`;
+    if (el.dataset.key === key) return;
+    el.dataset.key = key;
+    el.classList.toggle('ready', k >= 1);
+    el.innerHTML = `<b>${k >= 1 ? 'READY! ' : 'NEXT: '}${esc(g.title)}</b><small>${esc(g.sub)} &middot; ${formatMoney(g.cost)}</small><div class="cp big"><i style="width:${k * 100}%"></i></div>`;
+  }
+
   /** Break-free meter for the Kraken. */
   struggle(show: boolean, progress = 0, left = 0) {
     let el = this.el.struggle;
@@ -440,10 +475,28 @@ export class UI {
     while (this.el.toasts.children.length > 4) this.el.toasts.firstElementChild!.remove();
     setTimeout(() => t.remove(), 2600);
   }
-  floater(x: number, y: number, text: string, color = '#ffd23a') {
-    const f = h(`<div class="floater display outlined" style="left:${x}px;top:${y}px;color:${color}">${esc(text)}</div>`);
+  floater(x: number, y: number, text: string, color = '#ffd23a', pop = false) {
+    const f = h(`<div class="floater display outlined ${pop ? 'pop' : ''}" style="left:${x}px;top:${y}px;color:${color}">${esc(text)}</div>`);
     this.el.hud.appendChild(f);
-    setTimeout(() => f.remove(), 1400);
+    setTimeout(() => f.remove(), pop ? 800 : 1400);
+  }
+
+  /** Paper confetti bursting out of a point (upgrades, wins). */
+  confetti(x: number, y: number, n = 26) {
+    const colors = ['#ffd23a', '#ff5ab0', '#5ac8ff', '#7fff8a', '#ff8a3a', '#c070ff'];
+    for (let i = 0; i < n; i++) {
+      const a = -Math.PI / 2 + (Math.random() - 0.5) * 2.2, v = 120 + Math.random() * 180;
+      const c = h(`<div class="confetti" style="left:${x}px;top:${y}px;background:${colors[i % colors.length]};--dx:${Math.cos(a) * v}px;--dy:${Math.sin(a) * v}px;--rot:${(Math.random() - 0.5) * 900}deg;animation-duration:${0.9 + Math.random() * 0.6}s"></div>`);
+      this.root.appendChild(c);
+      setTimeout(() => c.remove(), 1600);
+    }
+  }
+
+  /** Red pulse at the screen edges when the line is about to snap (0..1). */
+  danger(level: number) {
+    let el = this.el.danger;
+    if (!el) { el = this.el.danger = h(`<div id="danger"></div>`); this.root.appendChild(el); }
+    el.style.opacity = String(Math.max(0, Math.min(1, level)));
   }
 
   // ------------------------------------------------------------------ maps

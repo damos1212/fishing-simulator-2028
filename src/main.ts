@@ -6,6 +6,11 @@ import { loadSave } from './game/save';
 import { UI } from './ui/ui';
 import { setActiveRealm } from './data/zones';
 import { buildHeightMap, buildTerrainMesh, syncRealm } from './world/terrain';
+import * as economy from './game/economy';
+import * as terrainMod from './world/terrain';
+import * as zones from './data/zones';
+import * as fish from './data/fish';
+import * as upgrades from './data/upgrades';
 
 // Yield so the loading bar can paint; falls back to a timer when the tab is hidden (no rAF).
 const nextFrame = () => new Promise<void>((r) => {
@@ -73,6 +78,8 @@ async function main() {
   (window as unknown as { __step: (n: number, dt?: number) => void }).__step = (n, dt = 16.7) => {
     for (let i = 0; i < n; i++) { simT = Math.max(simT + dt, performance.now()); game!.frame(simT); }
   };
+  // dev only: the modules the automated play-tester needs
+  if (import.meta.env.DEV) (window as unknown as { __mods: unknown }).__mods = { economy, terrain: terrainMod, zones, fish, upgrades };
   ui.setLoading(1);
 }
 

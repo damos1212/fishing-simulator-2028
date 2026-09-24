@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { speciesById } from '../data/fish';
 import { PERKS } from '../data/perks';
+import { TRACKS } from '../data/upgrades';
 import { buyPerk, catchFish, landCatch, migrateSave, newSave, perkCost, perkRank, perkValue, SHINY_VALUE } from './economy';
 import { checkAchievements } from './progress';
 import { Tournament, TOURNEY_TIME } from './tournament';
@@ -86,5 +87,22 @@ describe('tournaments', () => {
     expect(Tournament.prize(1, 100)).toEqual({ money: 600, pearls: 6 });
     expect(Tournament.prize(3, 100).pearls).toBe(1);
     expect(Tournament.prize(4, 100)).toEqual({ money: 0, pearls: 0 });
+  });
+});
+
+describe('settings and prices', () => {
+  it('turns old saves down to a quarter volume once', () => {
+    const old = migrateSave({ settings: { music: 0.8, sfx: 1 } });
+    expect(old.settings.music).toBeCloseTo(0.2);
+    expect(old.settings.sfx).toBeCloseTo(0.25);
+    const again = migrateSave(JSON.parse(JSON.stringify(old)));
+    expect(again.settings.music).toBeCloseTo(0.2);
+    expect(newSave().settings.music).toBeCloseTo(0.125);
+  });
+
+  it('prices never go down along a track', () => {
+    for (const t of TRACKS) {
+      for (let i = 2; i < t.tiers.length; i++) expect(t.tiers[i].cost, `${t.id} ${i}`).toBeGreaterThan(t.tiers[i - 1].cost);
+    }
   });
 });

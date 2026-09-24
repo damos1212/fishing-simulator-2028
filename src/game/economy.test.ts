@@ -15,7 +15,7 @@ describe('upgrades', () => {
     expect(buy(s, 'rod')).toBe(false);
     s.money = 1000;
     expect(buy(s, 'rod')).toBe(true);
-    expect(s.money).toBe(850);
+    expect(s.money).toBe(1000 - TRACKS.find((t) => t.id === 'rod')!.tiers[1].cost);
     expect(computeStats(s.upgrades).lineLength).toBe(85);
     expect(s.stats.upgrades).toBe(1);
   });

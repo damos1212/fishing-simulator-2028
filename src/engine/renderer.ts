@@ -9,6 +9,7 @@
 //   7. post: god rays, bloom chain, tonemapping, grading, waterline, lens drops, motion blur
 import { FrameState } from './frame';
 import { Atmosphere } from './atmosphere';
+import { GpuProfiler } from './gpu-profiler';
 import { OceanFFT } from './ocean-fft';
 import type { GPUContext } from './gpu';
 import type { MeshData, ModelData } from './glb';
@@ -24,6 +25,8 @@ const BLOOM_LEVELS = 5;
 const POST_FLOATS = 76;
 const MAX_LIGHTS = 32;
 const LIGHT_FLOATS = 8;
+/** The cloud dome is refreshed a slice at a time (clouds drift slowly). */
+const CLOUD_SLICES = 5;
 
 export interface GpuMesh {
   name: string;
@@ -39,6 +42,8 @@ export interface GpuMesh {
   /** Shading kind this frame (instance mode of the first draw) and whether any instance has an outline. */
   mode: number;
   outlined: boolean;
+  /** Drawn into the sun shadow maps (off for grass and other tiny clutter). */
+  shadow: boolean;
 }
 
 export interface GpuModel {
@@ -104,6 +109,8 @@ export class Renderer {
   readonly frame = new FrameState();
   fft!: OceanFFT;
   atmo!: Atmosphere;
+  /** Per-pass GPU timings (developer tool). */
+  prof!: GpuProfiler;
   readonly post = {
     time: 0, underwater: 0, bloom: 0.55, exposure: 1, flash: [0, 0, 0, 0], fade: [0, 0, 0, 0], vignette: 0.35, saturation: 1.12, aberration: 0, threshold: 2.2,
     rays: 0.55, contrast: 0.22, warmth: 0.6, grain: 0.018, warp: 0, flare: 0.7,
@@ -223,7 +230,6 @@ export class Renderer {
   private expoBuf: GPUBuffer;
   private expoU: GPUBuffer;
   private lastRender = 0;
-  /** The cloud dome is refreshed a third at a time (clouds drift slowly). */
   private cloudSlice = 0;
   private cloudsFresh = false;
 
@@ -255,6 +261,7 @@ export class Renderer {
       ],
     });
     this.atmo = new Atmosphere(d);
+    this.prof = new GpuProfiler(d, ctx.timestamps);
     this.lightBuf = d.createBuffer({ size: (4 + MAX_LIGHTS * LIGHT_FLOATS) * 4, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
     this.linSampler = d.createSampler({ magFilter: 'linear', minFilter: 'linear', addressModeU: 'clamp-to-edge', addressModeV: 'clamp-to-edge' });
     this.repSampler = d.createSampler({ magFilter: 'linear', minFilter: 'linear', addressModeU: 'repeat', addressModeV: 'repeat', addressModeW: 'repeat' });
@@ -578,6 +585,7 @@ export class Renderer {
       count: 0,
       mode: 0,
       outlined: false,
+      shadow: true,
     };
   }
 
@@ -948,19 +956,20 @@ export class Renderer {
 
     const enc = d.createCommandEncoder();
     // 0. sky-view LUT for the current sun, ocean waves (FFT cascades)
-    if (f.physSky > 0.001) this.atmo.update(enc, f.trueSun.y, f.camPos.y);
-    if (opts.ocean) this.fft.update(enc, f.time);
+    this.prof.begin();
+    if (f.physSky > 0.001) this.atmo.update(enc, f.trueSun.y, f.camPos.y, this.prof.pass('skyview'));
+    if (opts.ocean) this.fft.update(enc, f.time, this.prof.pass('fft'));
     // 1. clouds
     if (q.clouds && (f.cloudCover > 0.001 || f.cirrus > 0.01)) {
       const full = !this.cloudsFresh;
-      const p = enc.beginRenderPass({ colorAttachments: [{ view: this.cloudTex.createView(), loadOp: full ? 'clear' : 'load', storeOp: 'store', clearValue: [0, 0, 0, 1] }] });
+      const p = enc.beginRenderPass({ colorAttachments: [{ view: this.cloudTex.createView(), loadOp: full ? 'clear' : 'load', storeOp: 'store', clearValue: [0, 0, 0, 1] }], timestampWrites: this.prof.pass('clouds') });
       p.setPipeline(this.cloudPipe);
       p.setBindGroup(0, this.baseBG);
       if (!full) {
-        const h = this.cloudTex.height, rows = Math.ceil(h / 3);
+        const h = this.cloudTex.height, rows = Math.ceil(h / CLOUD_SLICES);
         const y = this.cloudSlice * rows;
         p.setScissorRect(0, y, this.cloudTex.width, Math.max(1, Math.min(rows, h - y)));
-        this.cloudSlice = (this.cloudSlice + 1) % 3;
+        this.cloudSlice = (this.cloudSlice + 1) % CLOUD_SLICES;
       }
       p.draw(3);
       p.end();
@@ -971,11 +980,12 @@ export class Renderer {
       const p = enc.beginRenderPass({
         colorAttachments: [],
         depthStencilAttachment: { view: this.shadowTex.createView({ dimension: '2d', baseArrayLayer: c, arrayLayerCount: 1 }), depthLoadOp: 'clear', depthStoreOp: 'store', depthClearValue: 1 },
+        timestampWrites: this.prof.pass('shadow' + c),
       });
-      p.setPipeline(this.shadowPipes[c]);
       p.setBindGroup(0, this.baseBG);
       p.setBindGroup(1, this.instBG);
-      drawMeshes(p);
+      const sp = this.shadowPipes[c];
+      drawMeshes(p, (m) => (m.shadow ? sp : null));
       p.end();
     }
     // 3. planar reflection
@@ -983,6 +993,7 @@ export class Renderer {
       const p = enc.beginRenderPass({
         colorAttachments: [{ view: this.reflColor.createView(), loadOp: 'clear', storeOp: 'store', clearValue: [0, 0, 0, 1] }],
         depthStencilAttachment: { view: this.reflDepth.createView(), depthLoadOp: 'clear', depthStoreOp: 'discard', depthClearValue: 0 },
+        timestampWrites: this.prof.pass('reflection'),
       });
       p.setBindGroup(0, this.reflBG);
       p.setPipeline(this.skyReflPipe);
@@ -996,6 +1007,7 @@ export class Renderer {
     const pass = enc.beginRenderPass({
       colorAttachments: [{ view: this.msaaColor.createView(), resolveTarget: this.sceneColor.createView(), loadOp: 'clear', storeOp: 'store', clearValue: [0, 0, 0, 60000] }],
       depthStencilAttachment: { view: this.depthTex.createView(), depthLoadOp: 'clear', depthStoreOp: 'store', depthClearValue: 0 },
+      timestampWrites: this.prof.pass('opaque'),
     });
     pass.setBindGroup(0, this.frameBG);
     pass.setPipeline(this.skyPipe);
@@ -1008,6 +1020,7 @@ export class Renderer {
     const wpass = enc.beginRenderPass({
       colorAttachments: [{ view: this.msaaColor.createView(), resolveTarget: this.hdr.createView(), loadOp: 'load', storeOp: 'discard' }],
       depthStencilAttachment: { view: this.depthTex.createView(), depthLoadOp: 'load', depthStoreOp: 'discard' },
+      timestampWrites: this.prof.pass('water'),
     });
     wpass.setBindGroup(0, this.frameBG);
     if (opts.ocean) {
@@ -1037,20 +1050,20 @@ export class Renderer {
       const dt = this.lastRender ? Math.min(0.25, (now - this.lastRender) / 1000) : 0.016;
       this.lastRender = now;
       d.queue.writeBuffer(this.expoU, 0, new Float32Array([dt, 1.4, 0.65, 1.6, 0.3, 0, 0, 0]));
-      const cp = enc.beginComputePass({ label: 'exposure' });
+      const cp = enc.beginComputePass({ label: 'exposure', timestampWrites: this.prof.pass('exposure') });
       cp.setPipeline(this.expoPipe);
       cp.setBindGroup(0, this.expoBG);
       cp.dispatchWorkgroups(1);
       cp.end();
     }
     if (q.ao || q.contact) {
-      const a = enc.beginRenderPass({ colorAttachments: [{ view: this.aoRaw.createView(), loadOp: 'clear', storeOp: 'store', clearValue: [1, 1, 1, 1] }] });
+      const a = enc.beginRenderPass({ colorAttachments: [{ view: this.aoRaw.createView(), loadOp: 'clear', storeOp: 'store', clearValue: [1, 1, 1, 1] }], timestampWrites: this.prof.pass('gtao') });
       a.setPipeline(this.aoPipe);
       a.setBindGroup(0, this.frameBG);
       a.setBindGroup(1, this.aoBG);
       a.draw(3);
       a.end();
-      const b = enc.beginRenderPass({ colorAttachments: [{ view: this.aoTex.createView(), loadOp: 'clear', storeOp: 'store', clearValue: [1, 1, 1, 1] }] });
+      const b = enc.beginRenderPass({ colorAttachments: [{ view: this.aoTex.createView(), loadOp: 'clear', storeOp: 'store', clearValue: [1, 1, 1, 1] }], timestampWrites: this.prof.pass('gtao') });
       b.setPipeline(this.aoBlurPipe);
       b.setBindGroup(0, this.frameBG);
       b.setBindGroup(1, this.aoBlurBG);
@@ -1061,7 +1074,7 @@ export class Renderer {
     }
     const hi = this.histIdx;
     {
-      const r = enc.beginRenderPass({ colorAttachments: [{ view: this.history[hi].createView(), loadOp: 'clear', storeOp: 'store', clearValue: [0, 0, 0, 1] }] });
+      const r = enc.beginRenderPass({ colorAttachments: [{ view: this.history[hi].createView(), loadOp: 'clear', storeOp: 'store', clearValue: [0, 0, 0, 1] }], timestampWrites: this.prof.pass('resolve') });
       r.setPipeline(this.resolvePipe);
       r.setBindGroup(0, this.frameBG);
       r.setBindGroup(1, this.resolveBGs[hi]);
@@ -1071,7 +1084,7 @@ export class Renderer {
 
     // 7. volumetric light, then post
     {
-      const p = enc.beginRenderPass({ colorAttachments: [{ view: this.volTex.createView(), loadOp: 'clear', storeOp: 'store', clearValue: [0, 0, 0, 1] }] });
+      const p = enc.beginRenderPass({ colorAttachments: [{ view: this.volTex.createView(), loadOp: 'clear', storeOp: 'store', clearValue: [0, 0, 0, 1] }], timestampWrites: this.prof.pass('volume') });
       if (q.volumetric) {
         p.setPipeline(this.volPipe);
         p.setBindGroup(0, this.frameBG);
@@ -1080,8 +1093,8 @@ export class Renderer {
       }
       p.end();
     }
-    const blit = (pipe: GPURenderPipeline, target: GPUTexture, slot: PostSlot, load: boolean) => {
-      const p = enc.beginRenderPass({ colorAttachments: [{ view: target.createView(), loadOp: load ? 'load' : 'clear', storeOp: 'store', clearValue: [0, 0, 0, 1] }] });
+    const blit = (pipe: GPURenderPipeline, target: GPUTexture, slot: PostSlot, load: boolean, name = 'bloom') => {
+      const p = enc.beginRenderPass({ colorAttachments: [{ view: target.createView(), loadOp: load ? 'load' : 'clear', storeOp: 'store', clearValue: [0, 0, 0, 1] }], timestampWrites: this.prof.pass(name) });
       p.setPipeline(pipe);
       p.setBindGroup(0, slot.bg);
       p.draw(3);
@@ -1090,7 +1103,7 @@ export class Renderer {
     const s = this.slots;
     if (q.rays && this.sunUV[2] > 0.01) {
       this.writePost(s.rays!, 1 / this.width, 1 / this.height);
-      blit(this.raysPipe, this.raysTex, s.rays!, false);
+      blit(this.raysPipe, this.raysTex, s.rays!, false, 'rays');
     } else {
       const p = enc.beginRenderPass({ colorAttachments: [{ view: this.raysTex.createView(), loadOp: 'clear', storeOp: 'store', clearValue: [0, 0, 0, 1] }] });
       p.end();
@@ -1108,12 +1121,14 @@ export class Renderer {
     const comp = this.composites[hi];
     this.writePost(comp, 1 / this.outW, 1 / this.outH);
     const swap = this.ctx.context.getCurrentTexture();
-    const p = enc.beginRenderPass({ colorAttachments: [{ view: swap.createView(), loadOp: 'clear', storeOp: 'store', clearValue: [0, 0, 0, 1] }] });
+    const p = enc.beginRenderPass({ colorAttachments: [{ view: swap.createView(), loadOp: 'clear', storeOp: 'store', clearValue: [0, 0, 0, 1] }], timestampWrites: this.prof.pass('composite') });
     p.setPipeline(this.compositePipe);
     p.setBindGroup(0, comp.bg);
     p.draw(3);
     p.end();
+    this.prof.end(enc);
     d.queue.submit([enc.finish()]);
+    this.prof.afterSubmit();
     if (opts.ocean) this.fft.afterSubmit();
     f.prevViewProj.set(f.cleanViewProj);
     this.historyValid = true;

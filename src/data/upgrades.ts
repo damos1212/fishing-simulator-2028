@@ -3,6 +3,8 @@ export type TrackId = 'rod' | 'reel' | 'bait' | 'hooks' | 'sinker' | 'lamp' | 'f
 export interface Tier {
   name: string;
   cost: number;
+  /** Zone level this tier belongs to (it is bought while fishing the level below). */
+  level: number;
   desc: string;
   /** Stat values this tier grants. */
   stats: Partial<Stats>;
@@ -43,12 +45,26 @@ export function nicePrice(v: number) {
   const p = Math.pow(10, Math.floor(Math.log10(v)) - 1);
   return Math.round(v / p) * p;
 }
-const price = (level: number, k: number) => nicePrice(LEVEL_VALUE[Math.min(level, LEVEL_VALUE.length - 1)] * k);
+/**
+ * Price scale per level, fitted so each stage of the game takes about as long as STAGE_MINUTES says
+ * (see tools/balance.ts). Hooks, coolers and faster gear multiply income much faster than fish values
+ * grow, so later tiers need a steeper price curve to keep the pace steady.
+ */
+export const COST_SCALE = [0.15, 0.44, 0.59, 0.65, 0.83, 1.08, 1.11, 1.48, 1.78, 2.01, 2.41, 3.09, 3.78, 4.38, 4.42, 4.78, 5.45, 5.45, 5.45, 6.15, 6.49, 6.49, 6.49, 6.49, 6.88, 7.22];
+/** A price unit for a level: rewards and fees that should keep pace with upgrade prices use this. */
+export const payUnit = (level: number) => {
+  const l = Math.min(Math.max(level, 0), LEVEL_VALUE.length - 1);
+  return LEVEL_VALUE[l] * COST_SCALE[l];
+};
+const price = (level: number, k: number) => {
+  const l = Math.min(Math.max(level, 0), LEVEL_VALUE.length - 1);
+  return nicePrice(LEVEL_VALUE[l] * k * COST_SCALE[l]);
+};
 
 type Row = [name: string, desc: string, stats: Partial<Stats>, level: number];
 const track = (id: TrackId, name: string, icon: string, blurb: string, k: number, rows: Row[]): Track => ({
   id, name, icon, blurb,
-  tiers: rows.map(([n, d, st, lvl], i) => ({ name: n, desc: d, stats: st, cost: i === 0 ? 0 : price(Math.max(lvl - 1, 0), k) })),
+  tiers: rows.map(([n, d, st, lvl], i) => ({ name: n, desc: d, stats: st, level: lvl, cost: i === 0 ? 0 : price(Math.max(lvl - 1, 0), k) })),
 });
 
 export const TRACKS: Track[] = [
@@ -171,10 +187,10 @@ export const TRACKS: Track[] = [
   {
     id: 'finder', name: 'Fish Finder', icon: 'finder', blurb: 'Find the good spots and the rare fish.',
     tiers: [
-      { name: 'Your Eyeballs', cost: 0, desc: 'Look for birds and bubbles!', stats: { finder: 0 } },
-      { name: 'Beep-o-Matic Sonar', cost: 400, desc: 'Shows nearby hot spots on the map and a depth sonar.', stats: { finder: 1 } },
-      { name: 'Color Sonar', cost: 6000, desc: 'Shows far-away hot spots, plus fish colors on the sonar.', stats: { finder: 2 } },
-      { name: 'Legend Tracker', cost: 90000, desc: "Every hot spot, and an arrow to legendary fish underwater.", stats: { finder: 3 } },
+      { name: 'Your Eyeballs', cost: 0, level: 0, desc: 'Look for birds and bubbles!', stats: { finder: 0 } },
+      { name: 'Beep-o-Matic Sonar', cost: price(1, 4), level: 2, desc: 'Shows nearby hot spots on the map and a depth sonar.', stats: { finder: 1 } },
+      { name: 'Color Sonar', cost: price(3, 8), level: 4, desc: 'Shows far-away hot spots, plus fish colors on the sonar.', stats: { finder: 2 } },
+      { name: 'Legend Tracker', cost: price(6, 12), level: 7, desc: "Every hot spot, and an arrow to legendary fish underwater.", stats: { finder: 3 } },
     ],
   },
   track('engine', 'Engines', 'engine', 'Go fast. Go far.', 14, [
@@ -218,7 +234,7 @@ export const TRACKS: Track[] = [
       ['Error-Correcting Hull', 'Unlocks The Glitch.', 23],
       ['Gravity Anchor', 'Opens the rift to the Cosmic Maw and unlocks the Accretion Rim.', 24],
       ['Event Horizon Hull', 'Unlocks The Maw. Good luck.', 25],
-    ].map(([n, d, lvl], i) => ({ name: n as string, desc: d as string, stats: { hull: i }, cost: i === 0 ? 0 : price((lvl as number) - 1, 70) })),
+    ].map(([n, d, lvl], i) => ({ name: n as string, desc: d as string, stats: { hull: i }, level: lvl as number, cost: i === 0 ? 0 : price((lvl as number) - 1, 70) })),
   },
   track('cooler', 'Coolers', 'cooler', 'Carry more fish before heading home.', 12, [
     ['Bucket', "It's a bucket.", { cooler: 6 }, 0],

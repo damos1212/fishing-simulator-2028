@@ -199,7 +199,7 @@ export class GameAudio {
   hover() { this.tone(1400, 0.03, 'sine', 0.03); }
   tick() { this.tone(2400 + Math.random() * 300, 0.012, 'square', 0.025); }
   bubble() { this.tone(500 + Math.random() * 700, 0.08, 'sine', 0.05, 1500 + Math.random() * 500); }
-  cast() { this.noise(0.35, 'bandpass', 600, 0.25, 3000, 2); this.tone(300, 0.25, 'triangle', 0.05, 900); }
+  cast(power = 1) { this.noise(0.25 + power * 0.2, 'bandpass', 500 + power * 300, 0.18 + power * 0.12, 2000 + power * 2200, 2); this.tone(260 + power * 80, 0.25, 'triangle', 0.05, 700 + power * 500); }
   splash(size = 1) {
     this.noise(0.5 * size, 'lowpass', 1800, 0.35 * size, 300);
     this.tone(180, 0.2, 'sine', 0.2 * size, 60);
@@ -214,6 +214,11 @@ export class GameAudio {
   snap() { this.noise(0.08, 'highpass', 3000, 0.4); this.tone(220, 0.35, 'sawtooth', 0.15, 50); }
   sting() { this.tone(1200, 0.2, 'sawtooth', 0.12, 200); this.noise(0.15, 'bandpass', 3000, 0.15, 800, 4); }
   chomp() { this.noise(0.12, 'lowpass', 900, 0.4); this.tone(120, 0.18, 'square', 0.15, 60); }
+  /** A fish slapping onto the deck; successive ones climb in pitch. */
+  thump(n: number) {
+    this.noise(0.12, 'lowpass', 700, 0.18, 200);
+    this.tone(mtof(67 + Math.min(n, 12) * 2), 0.09, 'square', 0.05, 0, 0.03);
+  }
   thud() { this.tone(90, 0.3, 'sine', 0.3, 40); this.noise(0.2, 'lowpass', 400, 0.3); }
   buy() { [0, 7, 12].forEach((n, i) => this.tone(mtof(76 + n), 0.15, 'square', 0.07, 0, i * 0.06)); this.cash(); }
   deny() { this.tone(200, 0.15, 'square', 0.08); this.tone(150, 0.2, 'square', 0.08, 0, 0.1); }
@@ -236,6 +241,19 @@ export class GameAudio {
     this.tone(48, 3.6, 'sine', 0.12, 35, 0.3);
     this.noise(2.5, 'lowpass', 300, 0.08, 120, 2, 0.2);
   }
+  /** A fish has spotted the lure (0 uncommon, 1 rare/epic, 2 legendary). */
+  notice(level: number) {
+    const base = [76, 81, 88][level];
+    this.tone(mtof(base), 0.07, 'triangle', 0.05);
+    this.tone(mtof(base + 5), 0.1, 'triangle', 0.05, 0, 0.06);
+  }
+  /** Heartbeat while the line is close to snapping. */
+  heartbeat() {
+    this.tone(62, 0.12, 'sine', 0.22, -20);
+    this.tone(58, 0.14, 'sine', 0.18, -20, 0.2);
+  }
+  /** Upgrade bought: bright rising chord. */
+  upgrade() { [0, 4, 7, 12].forEach((k, i) => { this.tone(mtof(72 + k), 0.22, 'square', 0.05, 0, i * 0.05); this.tone(mtof(84 + k), 0.18, 'sine', 0.04, 0, i * 0.05); }); }
   /** Glittering arpeggio for a shiny fish. */
   shiny() {
     [0, 7, 12, 16, 19, 24, 28].forEach((k, i) => {

@@ -56,7 +56,8 @@ fn posAt(ip: vec2i) -> vec3f {
   let right = normalize(vec3f(frame.view[0][0], frame.view[1][0], frame.view[2][0]));
   let up = normalize(vec3f(frame.view[0][1], frame.view[1][1], frame.view[2][1]));
   var vis = 0.0;
-  let SLICES = 2;
+  // with temporal AA the slice rotates every frame, so one slice per pixel is enough
+  let SLICES = select(2, 1, frame.taa.z > 0.5);
   let STEPS = 4;
   for (var sl = 0; sl < SLICES; sl++) {
     let phi = (f32(sl) + noise) * PI / f32(SLICES);

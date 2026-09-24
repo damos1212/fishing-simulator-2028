@@ -38,7 +38,7 @@ export interface SaveData {
   dex: Record<string, { caught: number; best: number; shiny?: number }>;
   stats: SaveStats;
   settings: { music: number; sfx: number; sensitivity: number; invertY: boolean; quality: number; shake: boolean; fps: boolean; graphics: number; summaries: 'big' | 'always';
-    taa: boolean; motionBlur: boolean; autoExposure: boolean };
+    taa: boolean; motionBlur: boolean; autoExposure: boolean; volumeV2?: boolean };
   boat: { x: number; z: number; heading: number } | null;
   seenZones: ZoneId[];
   tutorial: number;
@@ -82,7 +82,7 @@ export function newSave(): SaveData {
     cooler: [],
     dex: {},
     stats: newStats(),
-    settings: { music: 0.5, sfx: 0.8, sensitivity: 1, invertY: false, quality: 1, shake: true, fps: false, graphics: 2, summaries: 'big', taa: true, motionBlur: true, autoExposure: true },
+    settings: { music: 0.125, sfx: 0.2, sensitivity: 1, invertY: false, quality: 1, shake: true, fps: false, graphics: 2, summaries: 'big', taa: true, motionBlur: true, autoExposure: true, volumeV2: true },
     boat: null,
     seenZones: [],
     tutorial: 0,
@@ -121,7 +121,7 @@ export function migrateSave(raw: unknown): SaveData {
     version: 2,
     upgrades,
     stats: { ...d.stats, ...(r.stats ?? {}) },
-    settings: { ...d.settings, ...(r.settings ?? {}) },
+    settings: r.settings && !r.settings.volumeV2 ? quieter({ ...d.settings, ...r.settings }) : { ...d.settings, ...(r.settings ?? {}) },
     dex: Object.fromEntries(Object.entries(r.dex ?? {}).filter(([id]) => speciesById.has(id))),
     cooler: Array.isArray(r.cooler) ? r.cooler.filter((f) => speciesById.has(f.id)) : [],
     seenZones: Array.isArray(r.seenZones) ? r.seenZones.filter((z) => ALL_ZONES.some((a) => a.id === z)) : [],
@@ -138,6 +138,11 @@ export function migrateSave(raw: unknown): SaveData {
     perks: Object.fromEntries(Object.entries(r.perks ?? {}).filter(([id, v]) => perkById.has(id as PerkId) && typeof v === 'number')
       .map(([id, v]) => [id, Math.max(0, Math.min(v as number, perkById.get(id as PerkId)!.costs.length))])),
   };
+}
+
+/** Saves from before the volume rebalance play at a quarter of their old loudness, once. */
+function quieter(st: SaveData['settings']): SaveData['settings'] {
+  return { ...st, music: st.music * 0.25, sfx: st.sfx * 0.25, volumeV2: true };
 }
 
 export const perkRank = (save: SaveData, id: PerkId) => save.perks[id] ?? 0;

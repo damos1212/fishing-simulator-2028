@@ -1,5 +1,5 @@
 // Consumable supplies (bought with money) and cosmetics (bought with pearls).
-import { LEVEL_VALUE, nicePrice } from './upgrades';
+import { nicePrice, payUnit } from './upgrades';
 
 export type ItemId = 'chum' | 'lucky' | 'energy' | 'sonar' | 'bossbait' | 'golden';
 
@@ -26,7 +26,7 @@ export const ITEMS: Item[] = [
 export const itemById = new Map(ITEMS.map((i) => [i.id, i]));
 
 export function itemPrice(it: Item, level: number) {
-  return nicePrice(LEVEL_VALUE[Math.min(Math.max(level, 0), LEVEL_VALUE.length - 1)] * it.k);
+  return nicePrice(payUnit(level) * it.k);
 }
 
 export type CosmeticKind = 'paint' | 'hat' | 'flag' | 'lure' | 'line' | 'pet' | 'trail';

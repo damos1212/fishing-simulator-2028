@@ -52,8 +52,11 @@ export async function loadAssets(r: Renderer, progress: (p: number) => void): Pr
     tentacle: r.registerMesh(tentacleSegmentMesh()),
     reel: r.registerMesh(reelMesh()),
     flag: r.registerMesh(flagMesh()),
-    seagrass: r.registerMesh(seagrassMesh()),
-    grass: [grassMesh(), grassMesh('#3f9a3a', '#8ad05a'), grassMesh('#6ae0b0', '#d0fff0'), grassMesh('#7a3ad0', '#ff9ae8')].map((m) => r.registerMesh(m)),
-    flowers: ['#ff7ab0', '#ffe04a', '#ffffff', '#b07aff', '#ff5a3a'].map((c) => r.registerMesh(flowerMesh(c))),
+    seagrass: noShadow(r.registerMesh(seagrassMesh())),
+    grass: [grassMesh(), grassMesh('#3f9a3a', '#8ad05a'), grassMesh('#6ae0b0', '#d0fff0'), grassMesh('#7a3ad0', '#ff9ae8')].map((m) => noShadow(r.registerMesh(m))),
+    flowers: ['#ff7ab0', '#ffe04a', '#ffffff', '#b07aff', '#ff5a3a'].map((c) => noShadow(r.registerMesh(flowerMesh(c)))),
   };
 }
+
+/** Tiny clutter doesn't need to cast sun shadows. */
+function noShadow(m: GpuMesh) { m.shadow = false; return m; }

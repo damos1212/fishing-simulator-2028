@@ -47,7 +47,7 @@ export class OceanFFT {
     this.b = [arr('rgba32float'), arr('rgba32float')];
     this.disp = arr('rgba16float', MIPS);
     this.deriv = arr('rgba16float', MIPS);
-    this.sampler = d.createSampler({ magFilter: 'linear', minFilter: 'linear', mipmapFilter: 'linear', maxAnisotropy: 8,
+    this.sampler = d.createSampler({ magFilter: 'linear', minFilter: 'linear', mipmapFilter: 'linear', maxAnisotropy: 4,
       addressModeU: 'repeat', addressModeV: 'repeat' });
     this.foam = arr('r32float');
     this.params = d.createBuffer({ size: 64, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
@@ -118,7 +118,7 @@ export class OceanFFT {
     for (let i = 0; i < this.queryCount; i++) { this.queries[i * 4] = pts[i].x; this.queries[i * 4 + 2] = pts[i].z; }
   }
 
-  update(enc: GPUCommandEncoder, time: number) {
+  update(enc: GPUCommandEncoder, time: number, timestampWrites?: GPUComputePassTimestampWrites) {
     const w = this.wind;
     const p = this.data;
     p.set(this.lengths, 0);
@@ -127,7 +127,7 @@ export class OceanFFT {
     p[8] = 0.0009 * w.amp; p[9] = 0; p[10] = time; p[11] = 0.965;
     this.d.queue.writeBuffer(this.params, 0, p);
     if (this.queryCount) this.d.queue.writeBuffer(this.pointBuf, 0, this.queries, 0, this.queryCount * 4);
-    const pass = enc.beginComputePass({ label: 'ocean-fft' });
+    const pass = enc.beginComputePass({ label: 'ocean-fft', timestampWrites });
     const g = Math.ceil(N / 8);
     if (this.dirty) {
       pass.setPipeline(this.pipes.spectrum);

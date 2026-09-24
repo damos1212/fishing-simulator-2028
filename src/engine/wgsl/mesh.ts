@@ -353,6 +353,12 @@ fn faceNormal(in: VOut, ff: bool) -> vec3f {
   if (mode == 4u && distance(in.col.rgb, vec3f(0.0284, 0.1095, 0.2542)) < 0.012) { albedo = inst.b.rgb; }
   var m = materialize(in.matId, in.lp, in.ln, in.wp, &albedo, &emissive);
   if (mode == 4u && in.matId == 0u) { m.rough = 0.35; }
+  // the hull is darker and glossy where waves lap against it
+  if (mode == 4u) {
+    let wet = smoothstep(0.35, 0.0, in.wp.y + 0.12 * sin(frame.camPos.w * 2.3 + in.wp.x * 1.7 + in.wp.z * 1.3));
+    albedo *= 1.0 - wet * 0.3;
+    m.rough = mix(m.rough, 0.1, wet);
+  }
   emissive += albedo * inst.a.w;
   let lit = shade(albedo, faceNormal(in, ff), in.wp, in.ao, m) + emissive;
   o.color = vec4f(applyFog(lit, in.wp), dist);

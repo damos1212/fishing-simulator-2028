@@ -47,8 +47,8 @@ fn sunVisible(p: vec3f) -> f32 {
     // only hazy weather and golden hours show shafts above the water
     density = frame.fogColor.w * (0.6 + frame.mapInfo.w * 1.5) * 1.2;
   }
-  if (maxD <= 0.5 || density <= 0.0) { return vec4f(0.0, 0.0, 0.0, 1.0); }
-  let steps = 28;
+  if (maxD <= 0.5 || density <= 0.00002) { return vec4f(0.0, 0.0, 0.0, 1.0); }
+  let steps = select(14, 26, under);
   let jit = fract(52.9829189 * fract(dot(in.pos.xy, vec2f(0.06711056, 0.00583715))) + fract(frame.camPos.w * 7.31));
   let dt = maxD / f32(steps);
   let L = frame.sunDir.xyz;

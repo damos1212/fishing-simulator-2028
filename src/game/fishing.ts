@@ -16,7 +16,7 @@ export type FishingEvent =
   | { type: 'splash'; pos: Vec3 }
   | { type: 'shallow' }
   | { type: 'hook'; fish: FishActor }
-  | { type: 'lost'; fish: FishActor; by: 'sting' | 'thief' | 'snap' }
+  | { type: 'lost'; fish: FishActor; by: 'sting' | 'thief' | 'snap' | 'shake' }
   | { type: 'needBait'; fish: FishActor }
   | { type: 'full' }
   | { type: 'land'; catches: CaughtFish[]; actors: FishActor[]; from: Vec3; maxDepth: number; zone: ZoneId }
@@ -24,7 +24,9 @@ export type FishingEvent =
   | { type: 'boss'; fish: FishActor }
   | { type: 'surge'; fish: FishActor }
   | { type: 'enrage'; fish: FishActor }
-  | { type: 'perfect' };
+  | { type: 'perfect' }
+  | { type: 'slack'; fish: FishActor }
+  | { type: 'notice'; fish: FishActor };
 
 export class FishActor {
   pos = new Vec3();
@@ -61,6 +63,8 @@ export class FishActor {
     }
   }
   shiny = false;
+  /** Has spotted the lure (for the "!" pop-up). */
+  noticed = false;
   /** Turns this fish into its rare shiny variant: shifted colours, rainbow sheen, a soft glow. */
   makeShiny() {
     this.shiny = true;
@@ -75,6 +79,8 @@ export class FishActor {
 }
 
 const eyeInst = Inst.solid(0, 0, true);
+const HALO: Partial<Record<string, number>> = { rare: 1, epic: 2, legendary: 3.5 };
+const HALO_RGB: Record<string, [number, number, number]> = { rare: [0.3, 0.6, 1], epic: [0.8, 0.35, 1], legendary: [1, 0.75, 0.2] };
 /** Power meter sweet spot for a perfect cast. */
 export const PERFECT: [number, number] = [0.86, 0.97];
 
@@ -121,6 +127,9 @@ export class Fishing {
   fish: FishActor[] = [];
   hooked: FishActor[] = [];
   tension = 0;
+  /** Seconds the line has been slack during a fight. */
+  slack = 0;
+  private slackWarned = false;
   fighting: FishActor | null = null;
   boss: FishActor | null = null;
   stun = 0;
@@ -368,8 +377,16 @@ export class Fishing {
         this.drop(f, 'snap');
         this.tension = 0;
       }
+      // a slack line lets the fish work the hook loose: keep the needle between slack and snap
+      if (!f.sp.boss) {
+        this.slack = this.tension < 0.08 ? this.slack + dt : Math.max(0, this.slack - dt * 3);
+        if (this.slack > 1.3 && !this.slackWarned) { this.slackWarned = true; this.events.push({ type: 'slack', fish: f }); }
+        if (this.slack > 2.8 && this.rand() < dt * 1.2) { this.drop(f, 'shake'); this.slack = 0; }
+      }
       if (mv.length() > 0.01) desired.addScaled(mv.normalize(), s.swimSpeed * slow * 0.35);
     } else {
+      this.slack = 0;
+      this.slackWarned = false;
       this.tension = Math.max(0, this.tension - dt * 2);
       if (mv.length() > 0.01) desired.addScaled(mv.normalize(), s.swimSpeed * slow);
     }
@@ -422,7 +439,7 @@ export class Fishing {
     for (const f of this.fish) if (!f.hooked) f.gone = true;
   }
 
-  private drop(f: FishActor, by: 'sting' | 'thief' | 'snap') {
+  private drop(f: FishActor, by: 'sting' | 'thief' | 'snap' | 'shake') {
     const i = this.hooked.indexOf(f);
     if (i < 0) return;
     this.hooked.splice(i, 1);
@@ -499,6 +516,7 @@ export class Fishing {
       } else if (f.flee <= 0 && dist < s.attract + f.length * 0.6) {
         if (s.baitTier >= sp.bait || sp.junk) {
           if (this.hooked.length < s.hooks) {
+            if (!f.noticed && !sp.junk) { f.noticed = true; this.events.push({ type: 'notice', fish: f }); }
             f.target.copy(lure);
             speed *= sp.junk ? 0 : 1.35;
             if (dist < reach + (sp.junk ? 0.4 : 0)) this.hook(f);
@@ -599,6 +617,14 @@ export class Fishing {
 
   drawFish(r: Renderer, a: Assets, f: FishActor, up: Vec3) {
     const model = a.fish[f.sp.model];
+    // valuable fish carry a soft halo in their rarity colour so you can pick them out of a school
+    const tier = HALO[f.sp.rarity];
+    if (tier && !f.hooked && this.state === 'under') {
+      const c = HALO_RGB[f.sp.rarity];
+      const pulse = 0.8 + 0.2 * Math.sin(f.phase * 0.3);
+      r.particle(f.pos.x, f.pos.y, f.pos.z, f.length * (0.9 + tier * 0.25) * pulse, c[0] * tier * 0.35, c[1] * tier * 0.35, c[2] * tier * 0.35, 0, 0);
+      if (tier >= 3) r.light(f.pos.x, f.pos.y, f.pos.z, 6 + f.length * 2, c[0], c[1], c[2], 0.8);
+    }
     if (f.shiny && Math.random() < 0.35) {
       const k = (Math.random() - 0.5) * f.length;
       r.particle(f.pos.x + f.dir.x * k + (Math.random() - 0.5) * 0.4, f.pos.y + (Math.random() - 0.3) * 0.5, f.pos.z + f.dir.z * k + (Math.random() - 0.5) * 0.4,

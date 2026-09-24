@@ -83,7 +83,8 @@ function S(zone: ZoneId, id: string, name: string, model: Archetype, depth: [num
     value: o.hazard ? 0 : o.junk ? Math.round(o.v ?? 1) : nicePrice(LEVEL_VALUE[level] * RARITY_VALUE[rarity] * (o.v ?? 1)),
     bait,
     speed: o.speed ?? SPEED[model],
-    weight: o.weight ?? (o.hazard ? 2.5 : RARITY_WEIGHT[rarity]),
+    // stingers and thieves get bolder in the higher zones
+    weight: o.weight ?? (o.hazard ? 2.5 * (1 + Math.min(level, 20) * 0.07) : RARITY_WEIGHT[rarity]),
     kg: o.kg ?? LINE_STRENGTH[Math.min(level, LINE_STRENGTH.length - 1)] * RARITY_KG[rarity] * (size > 2 ? 1.3 : 1),
     time: o.time, weather: o.weather, boss,
     bottom: o.bottom ?? BOTTOM.includes(model), upright: o.upright ?? UPRIGHT.includes(model),

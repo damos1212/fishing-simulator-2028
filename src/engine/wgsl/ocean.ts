@@ -82,7 +82,8 @@ fn fftPixel(xz: vec2f, dist: f32, gx: vec2f, gy: vec2f) -> FftSample {
     let k = cascadeFade(c, dist);
     if (k <= 0.0) { continue; }
     let L = op.lengths[c];
-    o.disp += textureSampleGrad(dispTex, fftSamp, xz / L, c, gx / L, gy / L) * vec4f(k, k, k, k * foamWeight(c));
+    // the finest cascade only adds ripples (slopes), its displacement and foam are negligible
+    if (c < 3) { o.disp += textureSampleGrad(dispTex, fftSamp, xz / L, c, gx / L, gy / L) * vec4f(k, k, k, k * foamWeight(c)); }
     o.deriv += textureSampleGrad(derivTex, fftSamp, xz / L, c, gx / L, gy / L) * k;
   }
   return o;
@@ -286,23 +287,31 @@ fn detailNormal(xz: vec2f, t: f32, strength: f32) -> vec2f {
   let wAlong = dot(in.xz, wd);
   let wAcross = dot(in.xz, vec2f(-wd.y, wd.x));
   // long lacy foam lines along the wind, only in a stiff breeze
-  let streak = smoothstep(0.5, 0.95, dnoise(vec2f(wAlong * 0.003, wAcross * 0.045) + vec2f(t * 0.002, 0.0)).a)
-    * smoothstep(0.4, 0.75, dnoise(vec2f(wAlong * 0.015, wAcross * 0.015)).r) * smoothstep(0.3, 0.6, foamTex2);
-  foam = max(foam, streak * clamp((op.wind.z - 10.0) / 6.0, 0.0, 1.0) * 0.4 * (1.0 - smoothstep(150.0, 700.0, camDist)));
+  let streakK = clamp((op.wind.z - 10.0) / 6.0, 0.0, 1.0) * (1.0 - smoothstep(150.0, 700.0, camDist));
+  if (streakK > 0.0) {
+    let streak = smoothstep(0.5, 0.95, dnoise(vec2f(wAlong * 0.003, wAcross * 0.045) + vec2f(t * 0.002, 0.0)).a)
+      * smoothstep(0.4, 0.75, dnoise(vec2f(wAlong * 0.015, wAcross * 0.015)).r) * smoothstep(0.3, 0.6, foamTex2);
+    foam = max(foam, streak * streakK * 0.4);
+  }
   let depth = max(-h, 0.0);
   let shore = 1.0 - smoothstep(0.0, 1.1, depth + 0.25 * sin(t * 1.3 + (in.xz.x + in.xz.y) * 0.07));
   foam = max(foam, shore * 0.8 * smoothstep(0.25, 0.5, foamTex2) * step(0.001, depth + 1.0));
   // whitewater: bright at the spilling lip, breaking up into lace behind it
-  let wlace = dnoise(in.xz * 0.28 + vec2f(t * 0.04, -t * 0.03)).a * 0.55 + dnoise(in.xz * 0.9 + vec2f(-t * 0.06, t * 0.05)).a * 0.45;
-  foam = max(foam, su0.y * smoothstep(0.9, 0.42, wlace + (1.0 - su0.y) * 0.5));
-  let soft = dnoise(in.xz * 0.35 + vec2f(t * 0.03, -t * 0.02)).a;
-  let touch = (1.0 - smoothstep(0.0, 0.6, thick)) * smoothstep(0.35, 0.7, soft + 0.1 * sin(t * 2.0 + in.xz.x * 0.7));
-  foam = max(foam, touch * 0.55);
+  if (su0.y > 0.001) {
+    let wlace = dnoise(in.xz * 0.28 + vec2f(t * 0.04, -t * 0.03)).a * 0.55 + dnoise(in.xz * 0.9 + vec2f(-t * 0.06, t * 0.05)).a * 0.45;
+    foam = max(foam, su0.y * smoothstep(0.9, 0.42, wlace + (1.0 - su0.y) * 0.5));
+  }
+  if (thick < 0.6) {
+    let soft = dnoise(in.xz * 0.35 + vec2f(t * 0.03, -t * 0.02)).a;
+    let touch = (1.0 - smoothstep(0.0, 0.6, thick)) * smoothstep(0.35, 0.7, soft + 0.1 * sin(t * 2.0 + in.xz.x * 0.7));
+    foam = max(foam, touch * 0.55);
+  }
   for (var i = 0; i < 16; i++) {
     let w = frame.wake[i];
     if (w.w <= 0.0) { continue; }
     let d = distance(in.xz, w.xy);
     let r = 1.6 + w.z * 1.4;
+    if (d > r + 0.6) { continue; }
     let ring = (1.0 - smoothstep(r - 0.8, r, d)) * smoothstep(r - 3.0, r - 0.8, d * 1.0 + 0.6);
     let blob = 1.0 - smoothstep(0.0, r, d);
     let life = clamp(1.0 - w.z / 6.0, 0.0, 1.0);
@@ -316,9 +325,11 @@ fn detailNormal(xz: vec2f, t: f32, strength: f32) -> vec2f {
   let across = abs(dot(bd, side));
   let hull = (1.0 - smoothstep(1.3, 2.2, across + max(abs(along) - 3.2, 0.0) * 1.2)) * smoothstep(0.3, 1.3, frame.boat.w);
   foam = max(foam, hull * step(0.4, vnoise(in.xz * 2.0 + vec2f(t * 3.0, 0.0))));
-  let lace = dnoise(in.xz * 0.45 + vec2f(t * 0.05, 0.0)).a * 0.6 + dnoise(in.xz * 1.3 - vec2f(0.0, t * 0.08)).a * 0.4;
-  foam = max(foam, wk0.y * smoothstep(0.55, 0.25, lace + (1.0 - wk0.y) * 0.5));
-  let vis = sunShadow(in.wp, vec3f(0.0, 1.0, 0.0)) * cloudShadow(in.wp);
+  if (wk0.y > 0.001) {
+    let lace = dnoise(in.xz * 0.45 + vec2f(t * 0.05, 0.0)).a * 0.6 + dnoise(in.xz * 1.3 - vec2f(0.0, t * 0.08)).a * 0.4;
+    foam = max(foam, wk0.y * smoothstep(0.55, 0.25, lace + (1.0 - wk0.y) * 0.5));
+  }
+  let vis = sunShadowLite(in.wp) * cloudShadow(in.wp);
   let foamLight = frame.sunColor.rgb * frame.sunDir.w * (0.45 + 0.4 * vis) + frame.ambient.rgb * frame.ambient.w * 0.5;
   col = mix(col, vec3f(0.95, 0.98, 1.0) * foamLight * 0.62, clamp(foam, 0.0, 1.0));
 

@@ -27,6 +27,9 @@ export class FX {
 
   rnd(a = -1, b = 1) { return a + (b - a) * this.rand(); }
 
+  /** Drops every particle below a height (underwater-only effects once the camera surfaces). */
+  clearBelow(y: number) { this.ps = this.ps.filter((p) => p.y > y); }
+
   splash(pos: Vec3, size = 1) {
     for (let i = 0; i < 40 * size; i++) {
       const a = this.rnd(0, Math.PI * 2), s = this.rnd(1, 5) * size;

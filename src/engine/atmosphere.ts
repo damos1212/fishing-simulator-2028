@@ -53,12 +53,12 @@ export class Atmosphere {
   }
 
   /** Re-renders the sky around the camera for a sun direction (y up) and camera height (m). */
-  update(enc: GPUCommandEncoder, sunY: number, camHeight: number) {
+  update(enc: GPUCommandEncoder, sunY: number, camHeight: number, timestampWrites?: GPUComputePassTimestampWrites) {
     const u = this.data;
     u[0] = 0; u[1] = 0; u[2] = Math.max(-1, Math.min(1, sunY)); u[3] = 0;
     u[4] = Math.max(0.001, Math.min(camHeight, 2000) / 1000); u[5] = 0; u[6] = 0; u[7] = 0;
     this.d.queue.writeBuffer(this.uni, 0, u);
-    const pass = enc.beginComputePass({ label: 'sky-view' });
+    const pass = enc.beginComputePass({ label: 'sky-view', timestampWrites });
     pass.setPipeline(this.pipe);
     pass.setBindGroup(0, this.group);
     pass.dispatchWorkgroups(Math.ceil(192 / 8), Math.ceil(108 / 8));
