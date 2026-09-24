@@ -75,6 +75,13 @@ export const mat4 = {
     o[0] = f / aspect; o[5] = f; o[11] = -1; o[14] = near;
     return o;
   },
+  /** Orthographic projection for WebGPU clip space (depth 0 at near, 1 at far). */
+  ortho(o: Mat4, l: number, r: number, b: number, t: number, n: number, f: number) {
+    o.fill(0);
+    o[0] = 2 / (r - l); o[5] = 2 / (t - b); o[10] = -1 / (f - n);
+    o[12] = -(r + l) / (r - l); o[13] = -(t + b) / (t - b); o[14] = -n / (f - n); o[15] = 1;
+    return o;
+  },
   lookAt(o: Mat4, eye: Vec3, target: Vec3, up: Vec3) {
     let zx = eye.x - target.x, zy = eye.y - target.y, zz = eye.z - target.z;
     let l = Math.hypot(zx, zy, zz) || 1; zx /= l; zy /= l; zz /= l;

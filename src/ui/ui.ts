@@ -111,7 +111,7 @@ export class UI {
       <button class="btn green hidden">${hasSave ? 'CONTINUE' : 'PLAY'}</button>
       <div class="controls">
         <b>W A S D</b><span>Sail the boat / steer the lure</span>
-        <b>Mouse / 2-finger swipe / Arrows</b><span>Look around (pinch to zoom)</span>
+        <b>Mouse / Arrows</b><span>Look around (wheel to zoom; trackpad: 2-finger swipe, pinch)</span>
         <b>Hold Click or Space</b><span>Cast power, reel in underwater</span>
         <b>Hold Shift or Right Click</b><span>Dive the lure deeper</span>
         <b>A / D while fighting</b><span>Counter the fish's pull</span>
@@ -690,11 +690,12 @@ export class UI {
       <label>Music <input type="range" min="0" max="1" step="0.05" value="${s.music}" data-k="music"></label>
       <label>Sound FX <input type="range" min="0" max="1" step="0.05" value="${s.sfx}" data-k="sfx"></label>
       <label>Mouse sensitivity <input type="range" min="0.3" max="2.5" step="0.05" value="${s.sensitivity}" data-k="sensitivity"></label>
-      <label>Render quality <input type="range" min="0.5" max="1" step="0.25" value="${s.quality}" data-k="quality"></label>
+      <label>Graphics <span class="gq">${['Low', 'Medium', 'High', 'Ultra'][s.graphics] ?? 'High'}</span><input type="range" min="0" max="3" step="1" value="${s.graphics}" data-k="graphics"></label>
+      <label>Resolution <input type="range" min="0.5" max="1" step="0.25" value="${s.quality}" data-k="quality"></label>
       <label>Invert mouse Y <input type="checkbox" ${s.invertY ? 'checked' : ''} data-k="invertY"></label>
       <label>Screen shake <input type="checkbox" ${s.shake ? 'checked' : ''} data-k="shake"></label>
       <label>Show FPS <input type="checkbox" ${s.fps ? 'checked' : ''} data-k="fps"></label>
-      <div class="keys"><b>WASD</b><span>Sail / steer lure</span><b>Mouse, 2-finger swipe, Arrows</b><span>Look (pinch = zoom)</span><b>Hold Click / Space</b><span>Cast power / reel in</span>
+      <div class="keys"><b>WASD</b><span>Sail / steer lure</span><b>Mouse, Arrows</b><span>Look (wheel zoom; trackpad: swipe, pinch; right-drag if the mouse is free)</span><b>Hold Click / Space</b><span>Cast power / reel in</span>
         <b>Hold Shift / RMB</b><span>Dive</span><b>A / D in a fight</b><span>Counter the pull</span><b>1 - 6</b><span>Use supplies</span><b>E</b><span>Shop at docks & outposts</span><b>M</b><span>Map</span><b>H</b><span>Horn</span></div>
       <div style="font-weight:800;font-size:13px;text-align:center">Caught ${save.stats.caught} fish &middot; earned ${formatMoney(save.stats.earned)} &middot; deepest ${Math.round(save.stats.deepest)}m &middot; ${Math.round(save.stats.playTime / 60)} min played</div>
       <div class="row"><button class="btn green" data-resume>RESUME</button><button class="btn small gray" data-reset style="background:linear-gradient(#ff8a8a,#d04a4a)">Reset save</button></div>
@@ -706,6 +707,7 @@ export class UI {
       const k = (inp as HTMLInputElement).dataset.k as keyof SaveData['settings'];
       const v = inp.type === 'checkbox' ? inp.checked : parseFloat(inp.value);
       (s as unknown as Record<string, number | boolean>)[k] = v;
+      if (k === 'graphics') m.querySelector('.gq')!.textContent = ['Low', 'Medium', 'High', 'Ultra'][v as number];
       hs.change(s);
     }));
     m.querySelector('[data-resume]')!.addEventListener('click', () => hs.resume());

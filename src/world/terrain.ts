@@ -204,6 +204,32 @@ export function buildTerrainMesh(N = 600): MeshData {
     const k = (j * V + i) * 3;
     pos[k] = x; pos[k + 1] = heightAt(x, z); pos[k + 2] = z;
   }
+  // ambient occlusion from the horizon angle in 8 directions (stored as the normal's length)
+  const ao = new Float32Array(V * V);
+  const DIRS = [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [-1, -1], [1, -1], [-1, 1]];
+  const STEPS = [1, 2, 4, 8, 14];
+  for (let j = 0; j < V; j++) for (let i = 0; i < V; i++) {
+    const k = (j * V + i) * 3;
+    const x0 = pos[k], y0 = pos[k + 1], z0 = pos[k + 2];
+    let occ = 0;
+    for (let d = 0; d < 8; d++) {
+      const di = DIRS[d][0], dj = DIRS[d][1];
+      let best = 0;
+      for (let s = 0; s < 5; s++) {
+        const ii = i + di * STEPS[s], jj = j + dj * STEPS[s];
+        if (ii < 0 || jj < 0 || ii > N || jj > N) break;
+        const q = (jj * V + ii) * 3;
+        const dx = pos[q] - x0, dz = pos[q + 2] - z0;
+        const dh = pos[q + 1] - y0;
+        if (dh <= 0) continue;
+        const slope = dh / Math.sqrt(dx * dx + dz * dz + 1e-4);
+        if (slope > best) best = slope;
+      }
+      // sine of the horizon angle
+      occ += best / Math.sqrt(1 + best * best);
+    }
+    ao[j * V + i] = clamp(1 - (occ / 8) * 1.3, 0.3, 1);
+  }
   const verts = new Float32Array(V * V * 10);
   const col: number[] = [0, 0, 0, 0];
   for (let j = 0; j < V; j++) for (let i = 0; i < V; i++) {
@@ -218,7 +244,8 @@ export function buildTerrainMesh(N = 600): MeshData {
     colorAt(pos[k], pos[k + 2], pos[k + 1], 1 - ny, col);
     const o = (j * V + i) * 10;
     verts[o] = pos[k]; verts[o + 1] = pos[k + 1]; verts[o + 2] = pos[k + 2];
-    verts[o + 3] = nx; verts[o + 4] = ny; verts[o + 5] = nz;
+    const occl = ao[j * V + i];
+    verts[o + 3] = nx * occl; verts[o + 4] = ny * occl; verts[o + 5] = nz * occl;
     verts[o + 6] = col[0]; verts[o + 7] = col[1]; verts[o + 8] = col[2]; verts[o + 9] = col[3];
   }
   const idx = new Uint32Array(N * N * 6);

@@ -29,7 +29,7 @@ export interface SaveData {
   cooler: CaughtFish[];
   dex: Record<string, { caught: number; best: number }>;
   stats: SaveStats;
-  settings: { music: number; sfx: number; sensitivity: number; invertY: boolean; quality: number; shake: boolean; fps: boolean };
+  settings: { music: number; sfx: number; sensitivity: number; invertY: boolean; quality: number; shake: boolean; fps: boolean; graphics: number };
   boat: { x: number; z: number; heading: number } | null;
   seenZones: ZoneId[];
   tutorial: number;
@@ -67,7 +67,7 @@ export function newSave(): SaveData {
     cooler: [],
     dex: {},
     stats: newStats(),
-    settings: { music: 0.5, sfx: 0.8, sensitivity: 1, invertY: false, quality: 1, shake: true, fps: false },
+    settings: { music: 0.5, sfx: 0.8, sensitivity: 1, invertY: false, quality: 1, shake: true, fps: false, graphics: 2 },
     boat: null,
     seenZones: [],
     tutorial: 0,

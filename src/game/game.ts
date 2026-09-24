@@ -4,7 +4,7 @@ import { cosmeticById, itemById, itemPrice, ITEMS, type ItemId } from '../data/i
 import { LEVEL_VALUE, nicePrice, TRACKS, type Stats, type TrackId } from '../data/upgrades';
 import { type Zone, type ZoneId, ZONES, zoneAt, zoneWeights } from '../data/zones';
 import { clamp, damp, dampAngle, hex, rng, Vec3 } from '../engine/math';
-import type { GpuMesh, Renderer } from '../engine/renderer';
+import { type GpuMesh, QUALITY, type Renderer } from '../engine/renderer';
 import { UI } from '../ui/ui';
 import { Environment, waveHeight } from '../world/environment';
 import { type Outpost, Scenery } from '../world/scenery';
@@ -192,6 +192,7 @@ export class Game {
     const s = this.save.settings;
     this.audio.setVolumes(s.music, s.sfx);
     this.r.renderScale = s.quality;
+    if (this.r.quality !== QUALITY[s.graphics]) this.r.setQuality(s.graphics);
     this.cam.shakeScale = s.shake ? 1 : 0;
   }
 
@@ -1021,7 +1022,7 @@ export class Game {
   /** Mouse (pointer lock), trackpad two-finger swipe and arrow keys all orbit the camera. */
   private lookInput(dt: number) {
     const inp = this.input, s = this.save.settings, c = this.cam;
-    if (inp.locked) c.rotate(inp.mouseDX, inp.mouseDY, s.sensitivity, s.invertY);
+    if (inp.mouseDX || inp.mouseDY) c.rotate(inp.mouseDX, inp.mouseDY, s.sensitivity, s.invertY);
     if (inp.orbitX || inp.orbitY) c.rotate(inp.orbitX * 1.4, inp.orbitY * 1.4, s.sensitivity, s.invertY);
     const kx = (inp.down('ArrowRight') ? 1 : 0) - (inp.down('ArrowLeft') ? 1 : 0);
     const ky = (inp.down('ArrowDown') ? 1 : 0) - (inp.down('ArrowUp') ? 1 : 0);
@@ -1140,7 +1141,12 @@ export class Game {
     const ui = this.ui;
     const s = this.stats;
     const coolerFull = this.save.cooler.length >= s.cooler;
-    const look = this.input.locked ? '' : '<br><small>Look: <kbd>2-finger swipe</kbd> or <kbd>Arrow keys</kbd> &nbsp; Zoom: pinch &nbsp; Items: <kbd>1</kbd>-<kbd>6</kbd></small>';
+    const inp = this.input;
+    const look = inp.locked ? '' : inp.device === 'trackpad'
+      ? '<br><small>Look: <kbd>2-finger swipe</kbd> or <kbd>Arrow keys</kbd> &nbsp; Zoom: pinch &nbsp; Items: <kbd>1</kbd>-<kbd>6</kbd></small>'
+      : inp.lockFailed
+        ? '<br><small>Look: <kbd>Right-drag</kbd> or <kbd>Arrow keys</kbd> &nbsp; Zoom: wheel &nbsp; Items: <kbd>1</kbd>-<kbd>6</kbd></small>'
+        : '<br><small><kbd>Click</kbd> to capture the mouse for mouse look &nbsp; Zoom: wheel &nbsp; Items: <kbd>1</kbd>-<kbd>6</kbd></small>';
     if (f.state === 'idle') {
       let p = 'Hold <kbd>Click</kbd> or <kbd>Space</kbd> to cast';
       if (this.dock) p = `<kbd>E</kbd> ${this.dock.kind === 'harbor' ? 'Tackle Shop' : this.dock.outpost.name} &nbsp; ` + p;

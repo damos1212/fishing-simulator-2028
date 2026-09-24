@@ -282,3 +282,4 @@ html, body { margin: 0; height: 100%; overflow: hidden; background: #0b1f33; fon
 #ending .cast span:nth-child(2n) { animation-delay: -1s; }
 #ending .btn { align-self: center; margin-top: 8px; }
 .mastered { font-family: 'Lilita One'; font-size: 14px; color: #fff; background: linear-gradient(#ffd23a, #e09000); border: 2px solid var(--ink); border-radius: 8px; padding: 1px 8px; vertical-align: middle; }
+#pause .gq { margin-left: auto; color: #c05a00; font-family: "Lilita One"; font-weight: 400; }

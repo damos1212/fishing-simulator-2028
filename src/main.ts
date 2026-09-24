@@ -34,6 +34,7 @@ async function main() {
   }
   const r = new Renderer(gpu);
   r.renderScale = save.settings.quality ?? 1;
+  r.setQuality(save.settings.graphics ?? 2);
   window.addEventListener('resize', () => r.resize());
 
   let assetP = 0, worldP = 0;

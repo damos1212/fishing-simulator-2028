@@ -5,6 +5,7 @@ export class FrameState {
   viewProj = mat4.create();
   invViewProj = mat4.create();
   view = mat4.create();
+  proj = mat4.create();
   camPos = new Vec3();
   time = 0;
   sunDir = new Vec3(0.4, 0.8, 0.3).normalize();
@@ -55,12 +56,38 @@ export class FrameState {
   boatSpeed = 0;
   lava: RGB = [1, 0.35, 0.05];
   lavaStrength = 0;
+  /** Shadow cascades (light view-projection), filled in by the renderer. */
+  sunVP0 = mat4.create();
+  sunVP1 = mat4.create();
+  shadowOn = 0;
+  shadowTexel = 1 / 2048;
+  shadowStrength = 0.85;
+  shadowCascades = 2;
+  /** 1 while rendering the mirrored reflection pass (clips everything below the water). */
+  clipReflect = 0;
+  aurora = 0;
+  neon = 0;
+  vortex = 0;
+  /** Water: light absorption per meter, planar reflections available, foam amount, detail normal strength. */
+  waterAbsorb = 0.09;
+  planar = 0;
+  foam = 1;
+  waterDetail = 0.55;
+  cloudBase = 900;
+  cloudThickness = 1300;
+  cloudDensity = 1;
+  volumetric = 0;
+  cloudSteps = 32;
+  rays = 0.6;
+  realmStyle = 0;
+  lowGravity = 0;
   /** x, z, age, strength per wake puff */
   wake = new Float32Array(64);
 
-  static readonly FLOATS = 196;
+  static readonly FLOATS = 248;
 
   setCamera(view: Mat4, proj: Mat4, pos: Vec3) {
+    this.proj.set(proj);
     this.view.set(view);
     mat4.multiply(this.viewProj, proj, view);
     mat4.invert(this.invViewProj, this.viewProj);
@@ -94,6 +121,13 @@ export class FrameState {
     v4(120, this.mapExtent, this.mapPower, this.night, this.rain);
     v4(124, this.boatX, this.boatZ, this.boatHeading, this.boatSpeed);
     c4(128, this.lava, this.lavaStrength);
-    o.set(this.wake, 132);
+    o.set(this.sunVP0, 132);
+    o.set(this.sunVP1, 148);
+    v4(164, this.shadowOn, this.shadowTexel, this.shadowStrength, this.shadowCascades);
+    v4(168, this.clipReflect, this.aurora, this.neon, this.vortex);
+    v4(172, this.waterAbsorb, this.planar, this.foam, this.waterDetail);
+    v4(176, this.cloudBase, this.cloudThickness, this.cloudDensity, this.volumetric);
+    v4(180, this.cloudSteps, this.rays, this.realmStyle, this.lowGravity);
+    o.set(this.wake, 184);
   }
 }

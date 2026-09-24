@@ -120,7 +120,119 @@ def join(objs, name):
     return ob
 
 
+# ---------------------------------------------------------------- materials + AO
+# The game reads vertex color alpha as (material + ao * 0.999) / 16 (see wgsl/mesh.ts).
+PAINT, WOOD, STONE, METAL, CLOTH, FOLIAGE, GLASS, GOLD, ICE, GLOSS, ORGANIC, SLIME = range(12)
+AUTO = -1        # browns become wood, everything else paint
+AUTO_METAL = -2  # like AUTO, but greys become metal
+AUTO_GOLD = -3   # like AUTO_METAL, plus saturated yellows become gold
+
+# Default material per exported file (or per mesh name inside it).
+MATERIALS = {
+    "boat": {"Motor": METAL, "Rockets": METAL, "Radar": METAL, "Lamp": METAL, "Flag": CLOTH, "*": AUTO_METAL},
+    "fisher": CLOTH, "lure": GLOSS, "pier": AUTO_METAL, "shop": AUTO, "lighthouse": AUTO, "rock": STONE,
+    "coral": ORGANIC, "iceberg": ICE, "pillar": STONE, "tentacle": SLIME, "crystal": GLASS, "gull": ORGANIC,
+    "chest": AUTO_GOLD, "shipwreck": AUTO, "ghostship": AUTO, "skullrock": STONE, "barrel": METAL,
+    "factory": AUTO_METAL, "lollipop": GLOSS, "candycane": GLOSS, "gumdrop": SLIME, "icecream": GLOSS,
+    "dome": AUTO_GOLD, "statue": STONE, "arch": STONE, "spire": STONE, "outpost": AUTO_METAL,
+    "aquarium": AUTO_METAL, "shell": GLOSS, "anchor": METAL, "pets": ORGANIC,
+    "hats": {"HatCrown": GOLD, "HatViking": AUTO_METAL, "HatPropeller": AUTO_METAL, "HatPropellerBlades": GLOSS, "HatFish": GLOSS, "*": CLOTH},
+}
+
+
+def _lin2srgb(c):
+    return c * 12.92 if c <= 0.0031308 else 1.055 * c ** (1 / 2.4) - 0.055
+
+
+def classify(rgb, mode):
+    import colorsys
+    if mode >= 0:
+        return mode
+    h, s, v = colorsys.rgb_to_hsv(*(_lin2srgb(c) for c in rgb[:3]))
+    if 0.03 < h < 0.12 and 0.3 < s < 0.85 and 0.15 < v < 0.8:
+        return WOOD
+    if mode in (AUTO_METAL, AUTO_GOLD) and s < 0.12 and 0.12 < v < 0.75:
+        return METAL
+    if mode == AUTO_GOLD and 0.1 < h < 0.17 and s > 0.5 and v > 0.55:
+        return GOLD
+    return PAINT
+
+
+def _mesh_objects(objs):
+    out = []
+
+    def walk(o):
+        if o.type == "MESH":
+            out.append(o)
+        for c in o.children:
+            walk(c)
+
+    for o in objs:
+        walk(o)
+    return out
+
+
+def bake_ao_and_materials(name, objs, rays=20):
+    """Writes material ids and raycast ambient occlusion into the vertex color alpha."""
+    from mathutils.bvhtree import BVHTree
+    meshes = [o for o in _mesh_objects(objs) if o.name != "Glow" and not o.name.startswith("Glow")]
+    if not meshes:
+        return
+    dg = bpy.context.evaluated_depsgraph_get()
+    verts, polys = [], []
+    lo = Vector((1e9, 1e9, 1e9))
+    hi = Vector((-1e9, -1e9, -1e9))
+    for o in meshes:
+        me = o.evaluated_get(dg).to_mesh()
+        mw = o.matrix_world
+        base = len(verts)
+        for v in me.vertices:
+            w = mw @ v.co
+            verts.append(w)
+            lo = Vector((min(lo.x, w.x), min(lo.y, w.y), min(lo.z, w.z)))
+            hi = Vector((max(hi.x, w.x), max(hi.y, w.y), max(hi.z, w.z)))
+        polys += [[base + i for i in p.vertices] for p in me.polygons]
+        o.evaluated_get(dg).to_mesh_clear()
+    bvh = BVHTree.FromPolygons(verts, polys, epsilon=0.0)
+    reach = max(0.08, min(3.0, (hi - lo).length * 0.18))
+    rnd = random.Random(11)
+    dirs = []
+    for _ in range(rays):
+        # cosine-weighted hemisphere around +Z
+        u, v = rnd.random(), rnd.random()
+        r, a = math.sqrt(u), v * math.tau
+        dirs.append(Vector((r * math.cos(a), r * math.sin(a), math.sqrt(max(0.0, 1 - u)))))
+    fish = name.startswith("fish_")
+    spec = MATERIALS.get(name, GLOSS if fish else AUTO)
+    for o in meshes:
+        attr = color_attr(o)
+        me = o.data
+        mw = o.matrix_world
+        nm = mw.to_3x3().inverted().transposed()
+        ao = []
+        for v in me.vertices:
+            n = (nm @ v.normal).normalized()
+            p = mw @ v.co + n * (reach * 0.02 + 1e-3)
+            q = n.to_track_quat("Z", "Y").to_matrix()
+            hit = 0.0
+            for d in dirs:
+                loc, _, _, dist = bvh.ray_cast(p, q @ d, reach)
+                if loc is not None:
+                    hit += 1.0 - (dist / reach) * 0.5
+            ao.append(max(0.25, 1.0 - hit / len(dirs) * 0.95))
+        mode = spec.get(o.name, spec.get("*", AUTO)) if isinstance(spec, dict) else spec
+        for loop in me.loops:
+            c = attr.data[loop.index].color
+            occ = ao[loop.vertex_index]
+            if fish and o.name == "Body":
+                a = occ * 0.999
+            else:
+                a = (classify(c, mode) + occ * 0.999) / 16.0
+            attr.data[loop.index].color = (c[0], c[1], c[2], a)
+
+
 def export(name, objs, outdir):
+    bake_ao_and_materials(name, objs)
     bpy.ops.object.select_all(action="DESELECT")
 
     def sel(o):

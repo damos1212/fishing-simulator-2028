@@ -1,6 +1,9 @@
 // Keyboard + mouse/touchpad. Pointer lock gives mouse look when available; when the browser
 // refuses it (embedded browsers, some trackpad setups) clicks still work and the camera is
-// driven by two-finger swipes, pinch zoom and the arrow keys instead.
+// driven by right/middle-drag (mouse), two-finger swipes and pinch (trackpad) or the arrow keys.
+// Wheel events tell a mouse (discrete notches) from a trackpad (fine deltas, sideways scroll, pinch).
+export type PointerDevice = 'mouse' | 'trackpad';
+
 export class Input {
   private held = new Set<string>();
   private pressed = new Set<string>();
@@ -20,6 +23,10 @@ export class Input {
   /** Time of the last manual camera input (ms), for camera auto-follow. */
   lastLook = 0;
   onLockChange: (locked: boolean) => void = () => {};
+  /** Best guess of the pointing device, refined by wheel events. Desktop default: mouse. */
+  device: PointerDevice = 'mouse';
+  private score = 0;
+  private dragging = false;
 
   constructor(private canvas: HTMLCanvasElement) {
     if (!('requestPointerLock' in canvas)) this.lockFailed = true;
@@ -38,7 +45,8 @@ export class Input {
       this.held.clear();
     });
     canvas.addEventListener('mousedown', (e) => {
-      if (this.wantLock && !this.locked) {
+      if (!this.locked && e.button !== 0) this.dragging = true;
+      if (this.wantLock && !this.locked && e.button === 0) {
         const first = !this.lockFailed;
         this.lock();
         // With working pointer lock the first click only captures the mouse.
@@ -52,10 +60,12 @@ export class Input {
       const k = 'Mouse' + e.button;
       this.held.delete(k);
       this.released.add(k);
+      if (e.button !== 0) this.dragging = false;
     });
     canvas.addEventListener('contextmenu', (e) => e.preventDefault());
     window.addEventListener('mousemove', (e) => {
-      if (!this.locked) return;
+      // without pointer lock: right/middle drag orbits the camera
+      if (!this.locked && !(this.dragging && (e.buttons & 6))) return;
       this.mouseDX += e.movementX;
       this.mouseDY += e.movementY;
       if (e.movementX || e.movementY) this.lastLook = performance.now();
@@ -64,11 +74,13 @@ export class Input {
       e.preventDefault();
       if (e.ctrlKey) {
         // trackpad pinch arrives as ctrl+wheel
+        this.vote(-3);
         this.zoom += e.deltaY * 0.02;
         return;
       }
-      const notch = e.deltaMode !== 0 || (e.deltaX === 0 && Math.abs(e.deltaY) >= 50 && Number.isInteger(e.deltaY));
-      if (notch) this.zoom += Math.sign(e.deltaY);
+      const notch = this.isNotch(e);
+      this.vote(notch ? 1 : -1);
+      if (notch || this.device === 'mouse') this.zoom += notch ? Math.sign(e.deltaY) : e.deltaY * 0.01;
       else {
         this.orbitX += e.deltaX;
         this.orbitY += e.deltaY;
@@ -82,6 +94,23 @@ export class Input {
       this.onLockChange(this.locked);
     });
     document.addEventListener('pointerlockerror', () => { this.lockFailed = true; });
+  }
+
+  /** Mouse wheels move in fixed notches; trackpads send fine, often fractional or sideways deltas. */
+  private isNotch(e: WheelEvent) {
+    if (e.deltaMode !== 0) return true;
+    if (e.deltaX !== 0) return false;
+    const legacy = (e as WheelEvent & { wheelDeltaY?: number }).wheelDeltaY;
+    if (legacy !== undefined && legacy !== 0) {
+      if (legacy === -3 * e.deltaY) return false;
+      if (legacy % 120 === 0) return true;
+    }
+    return Math.abs(e.deltaY) >= 50 && Number.isInteger(e.deltaY);
+  }
+  private vote(v: number) {
+    this.score = Math.max(-6, Math.min(6, this.score + v));
+    if (this.score >= 2) this.device = 'mouse';
+    else if (this.score <= -2) this.device = 'trackpad';
   }
 
   lock() {
