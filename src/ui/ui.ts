@@ -93,11 +93,12 @@ export class UI {
       <div id="items"></div>
       <div id="legend" class="hidden"><div class="arrow">&#9650;</div></div>
       <div id="fps" class="hidden"></div>
+      <div id="combo" class="hidden"><b class="display outlined"></b><i></i></div>
       <div id="photohint" class="hidden display outlined">PHOTO MODE<small><kbd>Enter</kbd> save picture &middot; <kbd>F</kbd> / <kbd>Esc</kbd> exit &middot; mouse to orbit, pinch/scroll to zoom</small></div>
     </div>`);
     root.appendChild(hud);
     for (const id of ['hud', 'money', 'pearls', 'cooler', 'contracts', 'zoneName', 'clock', 'minimap', 'bossbar', 'banner', 'toasts', 'tutorial', 'prompt', 'power', 'depth',
-      'hooks', 'tension', 'sonar', 'items', 'legend', 'fps', 'quest', 'photohint']) {
+      'hooks', 'tension', 'sonar', 'items', 'legend', 'fps', 'quest', 'photohint', 'combo']) {
       this.el[id] = hud.id === id ? hud : hud.querySelector('#' + id)!;
     }
     this.mini = (this.el.minimap.querySelector('canvas') as HTMLCanvasElement).getContext('2d')!;
@@ -163,8 +164,9 @@ export class UI {
     this.el.fps.classList.toggle('hidden', v === null);
     if (v !== null) this.el.fps.textContent = `${Math.round(v)} fps`;
   }
-  banner(t1: string, t2: string, t3: string, warn = false, ms = 3200) {
+  banner(t1: string, t2: string, t3: string, warn = false, ms = 3200, style = '') {
     const b = this.el.banner;
+    b.classList.toggle('rainbow', style === 'rainbow');
     b.querySelector('.t1')!.textContent = t1;
     b.querySelector('.t2')!.textContent = t2;
     b.querySelector('.t3')!.textContent = t3;
@@ -270,6 +272,35 @@ export class UI {
     const html = `<div class="qh"><span class="face" style="background:${q.npc.color}">${q.npc.face}</span><span class="display">STORY ${q.step}/${q.total}</span></div>
       <div class="qt">${esc(q.title)}</div>${q.goal > 1 ? `<div class="cp"><i style="width:${(v / q.goal) * 100}%"></i></div>` : ''}<small>${count}${count ? ' &middot; ' : ''}${esc(q.npc.name)}</small>`;
     if (el.innerHTML !== html) el.innerHTML = html;
+  }
+  combo(n: number, mult: number, left: number) {
+    const el = this.el.combo;
+    el.classList.toggle('hidden', n < 2);
+    if (n < 2) return;
+    const txt = `COMBO x${n} <small>${mult.toFixed(1)}x value</small>`;
+    const b = el.querySelector('b')!;
+    if (b.innerHTML !== txt) { b.innerHTML = txt; el.classList.remove('pop'); void el.offsetWidth; el.classList.add('pop'); }
+    (el.querySelector('i') as HTMLElement).style.width = `${left * 100}%`;
+    el.style.setProperty('--hue', String((n * 47) % 360));
+  }
+  /** Coins fly from the middle of the screen into the money counter. */
+  coinBurst(n: number) {
+    const target = this.el.money.getBoundingClientRect();
+    for (let i = 0; i < n; i++) {
+      const c = h(`<div class="flycoin">$</div>`);
+      const sx = window.innerWidth / 2 + (Math.random() - 0.5) * 240, sy = window.innerHeight / 2 + (Math.random() - 0.5) * 160;
+      c.style.left = `${sx}px`;
+      c.style.top = `${sy}px`;
+      this.root.appendChild(c);
+      const dx = target.left + 24 - sx, dy = target.top + 20 - sy;
+      c.animate([{ transform: 'translate(0,0) scale(0.4)', opacity: 0 }, { transform: `translate(${dx * 0.15}px, ${dy * 0.15 - 60}px) scale(1.2)`, opacity: 1, offset: 0.3 },
+        { transform: `translate(${dx}px, ${dy}px) scale(0.6)`, opacity: 1 }], { duration: 700 + i * 45, easing: 'cubic-bezier(.5,0,.8,.6)' }).onfinish = () => {
+        c.remove();
+        this.el.money.classList.remove('bump');
+        void this.el.money.offsetWidth;
+        this.el.money.classList.add('bump');
+      };
+    }
   }
   photo(on: boolean) {
     this.el.hud.classList.toggle('photo', on);

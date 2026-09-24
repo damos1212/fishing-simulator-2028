@@ -301,3 +301,16 @@ html, body { margin: 0; height: 100%; overflow: hidden; background: #0b1f33; fon
 .subtabs.realmtabs .tab small { opacity: .7; font-family: Nunito; font-weight: 800; }
 #ending .tease { color: #8a4ad0; font-size: 20px; line-height: 1.3; }
 #shop .more { text-align: center; font-weight: 900; opacity: .6; font-size: 13px; }
+
+/* ---------- juice */
+#combo { position: absolute; top: 222px; right: 16px; width: 190px; text-align: center; }
+#combo b { display: block; font-size: 26px; font-weight: 400; color: hsl(var(--hue, 40), 100%, 65%); }
+#combo b small { display: block; font-family: Nunito; font-weight: 900; font-size: 12px; color: #fff; }
+#combo i { display: block; height: 7px; margin-top: 4px; border: 2px solid var(--ink); border-radius: 6px; background: hsl(var(--hue, 40), 100%, 60%); transition: width .3s linear; }
+#combo.pop b { animation: pop .35s; }
+.flycoin { position: absolute; width: 28px; height: 28px; border-radius: 50%; border: 3px solid var(--ink); pointer-events: none; z-index: 5;
+  background: radial-gradient(circle at 35% 35%, #fff3a0, #ffc93c 45%, #e09000); display: grid; place-items: center; font-family: 'Lilita One'; font-size: 15px; color: #9a5a00; }
+#money.bump { animation: pop .25s; }
+#banner.rainbow .t1 { font-size: 34px; background: linear-gradient(90deg, #ff5a5a, #ffd23a, #7fff8a, #5ad0ff, #c070ff, #ff5a5a); background-size: 200% 100%;
+  -webkit-background-clip: text; background-clip: text; color: transparent; text-shadow: none; -webkit-text-stroke: 2px var(--ink); animation: rainbow 1.2s linear infinite; }
+@keyframes rainbow { to { background-position: 200% 0; } }

@@ -34,6 +34,7 @@ You need a browser with WebGPU support (current Chrome, Edge or Safari).
 - **Progression**: 10 upgrade tracks with up to 26 tiers, money that climbs into the billions, a supplies shop, rotating contracts, 76 achievements, pearls, and a style shop with hats, pets, boat paint, flags, lure skins and fishing line colors.
 - **Story**: 43 quests in six chapters from ten characters (Old Marta, Prof. Finnegan, Queen Coralia, Dr. Sludge, Captain Barnacle, Dr. Rex Rexington, Vex, Commander Nova, DJ Synthia and The Stranger). Some quests reward pets that ride on your boat.
 - **World events**: feeding frenzies (fish bite 50% more), golden hours (every catch sells double) and meteor showers that drop collectible star fragments.
+- **Juice**: catch combos (each landed haul within the window raises fish value up to x2), a slow-motion trophy camera for legendaries and bosses, coin showers when you sell, and ambient sounds for every realm.
 - **Extras**: treasure maps from bottles mark an X to dig up; completing a zone's fish log masters it for +20% sell value; a perfect-cast sweet spot on the power meter; photo mode (F, then Enter to save a picture).
 - **World**: floating outposts in every zone for selling, restocking and fast travel; treasure chests; fishing hot spots; an aquarium at the harbor that shows off your best catches; dolphins, breaching whales, other fishing boats and a sailing ghost ship.
 

@@ -218,6 +218,48 @@ export class GameAudio {
   buy() { [0, 7, 12].forEach((n, i) => this.tone(mtof(76 + n), 0.15, 'square', 0.07, 0, i * 0.06)); this.cash(); }
   deny() { this.tone(200, 0.15, 'square', 0.08); this.tone(150, 0.2, 'square', 0.08, 0, 0.1); }
   whoosh() { this.noise(0.4, 'bandpass', 400, 0.2, 2000, 3); }
+  /** Rising chime for each combo step. */
+  combo(n: number) {
+    const base = 67 + Math.min(n, 10) * 2;
+    [0, 4, 7, 12].forEach((k, i) => this.tone(mtof(base + k), 0.16, 'square', 0.05, 0, i * 0.05));
+  }
+  /** Occasional background sound that sells each realm. */
+  ambience(realm: string, underwater: boolean) {
+    if (!this.ctx) return;
+    const v = underwater ? 0.4 : 1;
+    switch (realm) {
+      case 'jurassic':
+        if (Math.random() < 0.5) {
+          // distant dinosaur roar
+          this.tone(95, 1.6, 'sawtooth', 0.07 * v, 45);
+          this.tone(142, 1.3, 'sawtooth', 0.04 * v, 70, 0.1);
+          this.noise(1.5, 'lowpass', 500, 0.12 * v, 150, 1);
+        } else {
+          // pterodactyl screech
+          this.tone(1900, 0.35, 'square', 0.025 * v, 1300);
+          this.tone(1700, 0.3, 'square', 0.02 * v, 1150, 0.4);
+        }
+        break;
+      case 'shattered':
+        this.noise(2.5, 'bandpass', 700, 0.08 * v, 300, 6);
+        this.tone(58, 2.5, 'sawtooth', 0.04 * v, 55);
+        this.tone(61.5, 2.5, 'sawtooth', 0.03 * v, 58);
+        break;
+      case 'selene':
+        this.noise(0.5, 'highpass', 3000, 0.04 * v);
+        [0, 0.18, 0.5].forEach((d) => this.tone(1250, 0.1, 'sine', 0.05 * v, 0, d));
+        break;
+      case 'neon':
+        [0, 7, 12, 16, 19, 24].forEach((k, i) => this.tone(mtof(72 + k), 0.09, 'square', 0.035 * v, 0, i * 0.07));
+        break;
+      case 'maw':
+        this.tone(41, 4, 'sine', 0.12 * v, 38);
+        this.noise(3.5, 'bandpass', 1800, 0.04 * v, 5200, 12);
+        break;
+      default:
+        if (Math.random() < 0.5) [0, 0.25].forEach((d) => this.tone(2600 + Math.random() * 400, 0.12, 'sine', 0.025 * v, -600, d));
+    }
+  }
   /** Rift crossing: a rising roar and a shimmering arpeggio. */
   warp() {
     this.noise(2.2, 'bandpass', 200, 0.35, 4000, 4);

@@ -117,6 +117,11 @@ export class Game {
   private warp: { t: number; to: RealmId; switched: boolean; tear: boolean } | null = null;
   private portalCool = 0;
   private portalHint: Portal | null = null;
+  /** Consecutive successful casts: every landed haul within the window raises the value multiplier. */
+  private combo = { n: 0, until: 0 };
+  /** Slow-motion orbit around a freshly landed legendary or boss. */
+  private trophy: { actor: FishActor; t: number } | null = null;
+  private nextAmbience = 20;
 
   constructor(private r: Renderer, private a: Assets, world: RealmWorld, public ui: UI, public save: SaveData, private canvas: HTMLCanvasElement) {
     this.input = new Input(canvas);
@@ -327,7 +332,7 @@ export class Game {
         const n = this.save.cooler.length;
         const v = sellAll(this.save);
         questEvent(this.save, { sold: v });
-        if (n) { this.audio.cash(); this.ui.toast(`+${formatMoney(v)}`, '#7fff8a', true, `Sold ${n} fish`); }
+        if (n) { this.audio.cash(); this.ui.toast(`+${formatMoney(v)}`, '#7fff8a', true, `Sold ${n} fish`); this.ui.coinBurst(Math.min(24, 6 + n)); }
         if (this.save.tutorial === 2) this.save.tutorial = 3;
         this.celebrate(checkAchievements(this.save));
         this.persist();
@@ -414,6 +419,14 @@ export class Game {
   private startTravel(to: Vec3, heading: number) {
     this.travel = { t: 0, to: to.clone(), heading };
     this.audio.whoosh();
+  }
+
+  private comboMult() { return Math.min(2, 1 + 0.1 * Math.max(0, this.combo.n - 1)); }
+
+  private breakCombo() {
+    if (this.combo.n >= 3) this.ui.toast('COMBO LOST', '#ff8a7a', false, `Your x${this.combo.n} streak ended`);
+    this.combo.n = 0;
+    this.combo.until = 0;
   }
 
   // ------------------------------------------------------------------ realms
@@ -585,6 +598,12 @@ export class Game {
 
   /** Realm-specific ambience: meteors, fel embers, star dust, neon sparks, comets. */
   private realmFx(dt: number) {
+    this.nextAmbience -= dt;
+    if (this.nextAmbience <= 0) {
+      this.nextAmbience = 18 + Math.random() * 30;
+      this.audio.ambience(activeRealm(), this.camUnder);
+    }
+    if (this.combo.n > 0 && this.time > this.combo.until) this.breakCombo();
     if (this.camUnder) return;
     const fx = this.fx;
     const c = this.cam.pos;
@@ -1113,6 +1132,7 @@ export class Game {
           break;
         case 'lost': {
           const n = e.fish.sp.name;
+          if (e.by === 'snap') this.breakCombo();
           if (e.by === 'snap') {
             this.ui.toast('SNAP!', '#ff6a5a', true, `${n} broke your line`);
             this.audio.snap();
@@ -1153,6 +1173,21 @@ export class Game {
         case 'land': {
           this.audio.splash(0.6);
           this.fx.splash(new Vec3(e.from.x, 0, e.from.z), 0.6);
+          const real = e.catches.filter((c) => !speciesById.get(c.id)?.junk);
+          if (real.length) {
+            this.combo.n = this.time < this.combo.until ? this.combo.n + 1 : 1;
+            this.combo.until = this.time + 50;
+            const mult = this.comboMult();
+            if (this.combo.n >= 2) {
+              for (const c of e.catches) c.value = Math.round(c.value * mult);
+              const hue = ['#7fe0ff', '#7fff8a', '#ffd23a', '#ff9a3a', '#ff5ab0', '#c070ff'][Math.min(5, this.combo.n - 2)];
+              this.ui.toast(`COMBO x${this.combo.n}!`, hue, this.combo.n >= 4, `Catches worth x${mult.toFixed(1)}`);
+              this.audio.combo(this.combo.n);
+            }
+            this.save.stats.bestCombo = Math.max(this.save.stats.bestCombo, this.combo.n);
+          } else this.breakCombo();
+          const star = e.actors.find((a) => a.sp.boss || a.sp.rarity === 'legendary');
+          if (star) this.trophy = { actor: star, t: -0.6 };
           e.actors.forEach((a, i) => {
             this.flyers.push({ actor: a, t: -i * 0.12, from: a.pos.clone(), local: new Vec3((Math.random() - 0.5) * 1.4, 1.1, -1.4 - Math.random() * 1.4), spin: Math.random() * 6 });
           });
@@ -1322,6 +1357,27 @@ export class Game {
       c.minPitch = -0.1;
       if (f.state === 'aim') c.desired.add(this.cam.forwardXZ.scale(4));
     }
+    const tr = this.trophy;
+    if (tr) {
+      tr.t += dt;
+      if (tr.t >= 0) {
+        if (tr.t - dt < 0) {
+          this.slowmo = 1.4;
+          const sp = tr.actor.sp;
+          if (!sp.boss) this.ui.banner('LEGENDARY CATCH!', sp.name, sp.flavor, false, 4200, 'rainbow');
+          this.fx.burst(tr.actor.pos.clone(), [1, 0.85, 0.3], 70, 9, 0.3);
+          this.fx.burst(tr.actor.pos.clone(), [0.5, 0.8, 1], 50, 7, 0.3);
+          this.fireworks = Math.max(this.fireworks, 3);
+        }
+        c.desired.copy(tr.actor.pos);
+        c.distTarget = tr.actor.length * 1.3 + 5;
+        c.yaw += dt * 0.9;
+        c.pitch = damp(c.pitch, 0.25, 3, dt);
+        c.fovTarget = 0.8;
+        c.waterSide = 1;
+        if (tr.t > 2.6) this.trophy = null;
+      }
+    }
     c.update(dt, this.water, heightAt);
     this.camUnder = c.pos.y < this.water(c.pos.x, c.pos.z) - 0.05;
     this.underwater = damp(this.underwater, this.camUnder ? 1 : 0, 10, dt);
@@ -1470,6 +1526,7 @@ export class Game {
       ui.legend({ x, y, angle: ang });
     } else ui.legend(null);
     if ((this.time * 2 | 0) !== ((this.time - 0.016) * 2 | 0)) ui.inventory(this.save.inventory, this.effectsList());
+    ui.combo(this.combo.n >= 2 ? this.combo.n : 0, this.comboMult(), clamp((this.combo.until - this.time) / 50, 0, 1));
   }
 
   // ------------------------------------------------------------------ rendering

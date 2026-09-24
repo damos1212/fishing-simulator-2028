@@ -18,7 +18,7 @@ export interface SaveStats {
   boots: number; bottles: number; ducks: number; treasures: number; contracts: number;
   upgrades: number; stolen: number; stung: number; maxHaul: number; bestCast: number; travels: number;
   itemsUsed: number; cosmetics: number; playTime: number;
-  maps: number; fragments: number; perfect: number; events: number; realmJumps: number;
+  maps: number; fragments: number; perfect: number; events: number; realmJumps: number; bestCombo: number;
 }
 
 export interface SaveData {
@@ -54,7 +54,7 @@ export interface SaveData {
 const newStats = (): SaveStats => ({
   casts: 0, caught: 0, earned: 0, deepest: 0, snapped: 0, legendaries: 0, bosses: 0, night: 0, storm: 0, rain: 0,
   boots: 0, bottles: 0, ducks: 0, treasures: 0, contracts: 0, upgrades: 0, stolen: 0, stung: 0, maxHaul: 0, bestCast: 0,
-  travels: 0, itemsUsed: 0, cosmetics: 0, playTime: 0, maps: 0, fragments: 0, perfect: 0, events: 0, realmJumps: 0,
+  travels: 0, itemsUsed: 0, cosmetics: 0, playTime: 0, maps: 0, fragments: 0, perfect: 0, events: 0, realmJumps: 0, bestCombo: 0,
 });
 
 export function newSave(): SaveData {
