@@ -10,6 +10,7 @@ interface P {
   r: number; g: number; b: number; a: number;
   kind: number; gravity: number; drag: number;
   floatUp: boolean;
+  stretch: number;
 }
 
 export class FX {
@@ -17,10 +18,10 @@ export class FX {
   private rand = rng(4242);
 
   spawn(p: Partial<P> & { x: number; y: number; z: number }) {
-    if (this.ps.length > 3000) return;
+    if (this.ps.length > 6000) return;
     this.ps.push({
       vx: 0, vy: 0, vz: 0, life: 0, max: 1, size: 0.3, grow: 0, r: 1, g: 1, b: 1, a: 1,
-      kind: 0, gravity: 0, drag: 0, floatUp: false, ...p,
+      kind: 0, gravity: 0, drag: 0, floatUp: false, stretch: 1, ...p,
     });
   }
 
@@ -77,8 +78,8 @@ export class FX {
     for (const p of this.ps) {
       const t = p.life / p.max;
       const fade = t < 0.1 ? t / 0.1 : 1 - Math.pow((t - 0.1) / 0.9, 2);
-      if (p.a === 0) r.particle(p.x, p.y, p.z, p.size, p.r * fade * 2, p.g * fade * 2, p.b * fade * 2, 0, p.kind);
-      else r.particle(p.x, p.y, p.z, p.size, p.r, p.g, p.b, p.a * fade, p.kind);
+      if (p.a === 0) r.particle(p.x, p.y, p.z, p.size, p.r * fade * 2, p.g * fade * 2, p.b * fade * 2, 0, p.kind, 0, p.stretch);
+      else r.particle(p.x, p.y, p.z, p.size, p.r, p.g, p.b, p.a * fade, p.kind, 0, p.stretch);
     }
   }
 }

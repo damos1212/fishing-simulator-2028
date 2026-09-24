@@ -141,7 +141,6 @@ def boat(outdir):
     parts.append(box("door", (0.7, 0.08, 1.15), (0, -0.21, 1.42), C("#8a5a36"), 0.03, 1))
     parts.append(cyl("mast", 0.05, 0.04, 1.8, (0, 1.2, 3.4), WHITE, 10))
     parts.append(box("spar", (0.9, 0.06, 0.06), (0, 1.2, 3.7), WHITE))
-    parts.append(prism2d("flag", [(1.2, 4.25), (1.2, 3.95), (0.45, 4.1)], 0.03, "YZ", (0, 0, 0), YELLOW))
     parts.append(cyl("stack", 0.11, 0.11, 0.7, (0.7, -0.05, 2.85), DARK, 12))
     parts.append(cyl("stackband", 0.12, 0.12, 0.12, (0.7, -0.05, 3.05), RED, 12))
     for s in (1, -1):
@@ -164,10 +163,31 @@ def boat(outdir):
 
     lamp = join([cyl("lbody", 0.13, 0.16, 0.35, (0.55, 1.55, 2.72), DARK, 12, (math.radians(90), 0, 0)),
                  cyl("lglass", 0.12, 0.12, 0.04, (0.55, 1.74, 2.72), C("#fff2a8"), 12, (math.radians(90), 0, 0))], "Lamp")
+    flag_pivot = Vector((0, 1.2, 4.1))
+    flag = prism2d("Flag", [(1.2, 4.3), (1.2, 3.9), (0.1, 4.1)], 0.03, "YZ", (0, 0, 0), (1, 0, 0, 1))
+    set_origin(flag, flag_pivot)
+    MG = C("#5a5e66")
+    motor = join([box("mhead", (0.42, 0.55, 0.6), (0, -3.72, 1.25), C("#d64933"), 0.08, 2),
+                  box("mcap", (0.44, 0.57, 0.12), (0, -3.72, 1.6), WHITE, 0.04, 1),
+                  cyl("mshaft", 0.07, 0.07, 1.2, (0, -3.78, 0.45), MG, 8),
+                  box("mfoot", (0.14, 0.4, 0.14), (0, -3.72, -0.12), MG, 0.04, 1),
+                  torus("mprop", 0.12, 0.04, (0, -3.55, -0.12), MG, (math.radians(90), 0, 0), 10, 5)], "Motor")
+    rockets = []
+    flames = []
+    for s in (1, -1):
+        rockets.append(cyl("rbody", 0.28, 0.28, 1.6, (s * 0.95, -3.2, 1.35), C("#c8ccd2"), 14, (math.radians(90), 0, 0)))
+        rockets.append(cyl("rnose", 0.28, 0.02, 0.6, (s * 0.95, -2.1, 1.35), C("#d64933"), 14, (math.radians(-90), 0, 0)))
+        rockets.append(cyl("rnoz", 0.2, 0.3, 0.35, (s * 0.95, -4.15, 1.35), C("#3a3a40"), 12, (math.radians(90), 0, 0)))
+        rockets.append(box("rfin", (0.05, 0.5, 0.5), (s * 0.95, -3.7, 1.7), C("#d64933")))
+        flames.append(cyl("flame", 0.22, 0.02, 1.2, (s * 0.95, -4.9, 1.35), C("#ffb040"), 12, (math.radians(90), 0, 0)))
+    rocket = join(rockets, "Rockets")
+    flame = join(flames, "Flame")
+    set_origin(flame, (0, -4.3, 1.35))
     spot = empty("FisherSpot", (0, -2.2, 0.8))
     tip = empty("LampTip", (0.55, 1.8, 2.72))
-    flip_z([body, radar, lamp, spot, tip])
-    export("boat", [body, radar, lamp, spot, tip], outdir)
+    objs = [body, radar, lamp, flag, motor, rocket, flame, spot, tip]
+    flip_z(objs)
+    export("boat", objs, outdir)
 
 
 # ---------------------------------------------------------------- fisherman
@@ -189,8 +209,6 @@ def fisher(outdir):
     for s in (1, -1):
         parts.append(sphere("eye", 0.03, (s * 0.085, -0.21, 1.59), C("#15181c"), segs=8, rings=6))
         parts.append(box("brow", (0.1, 0.03, 0.03), (s * 0.09, -0.22, 1.645), C("#e8e4dc"), rot=(0, s * 0.2, 0)))
-    parts.append(cyl("brim", 0.36, 0.33, 0.05, (0, 0.03, 1.69), COAT, 20, (math.radians(-8), 0, 0)))
-    parts.append(sphere("hat", 1.0, (0, 0.02, 1.72), COAT, (0.25, 0.25, 0.17), 16, 10))
     body = join(parts, "Fisher")
 
     shoulder = Vector((0, 0, 1.18))
@@ -203,7 +221,8 @@ def fisher(outdir):
     arm = join(arms, "Arms")
     set_origin(arm, shoulder)
     sock = empty("RodSocket", (0, -0.44, 1.02), arm)
-    export("fisher", [body, arm], outdir)
+    hat = empty("HatSpot", (0, 0.0, 1.66))
+    export("fisher", [body, arm, hat], outdir)
 
 
 # ---------------------------------------------------------------- lure

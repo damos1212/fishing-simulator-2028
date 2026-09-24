@@ -29,6 +29,7 @@ export class GameAudio {
   private engineGain!: GainNode;
   private engineFilter!: BiquadFilterNode;
   private uwGain!: GainNode;
+  private rainGain!: GainNode;
   private mood: Mood = 'sunny';
   private nextStep = 0;
   private step = 0;
@@ -86,6 +87,19 @@ export class GameAudio {
     uw.connect(uwf).connect(this.uwGain).connect(this.sfx);
     uw.start();
 
+    // rain hiss
+    const rain = ctx.createBufferSource();
+    rain.buffer = this.noiseBuf;
+    rain.loop = true;
+    rain.playbackRate.value = 1.3;
+    const rf = ctx.createBiquadFilter();
+    rf.type = 'highpass';
+    rf.frequency.value = 1800;
+    this.rainGain = ctx.createGain();
+    this.rainGain.gain.value = 0;
+    rain.connect(rf).connect(this.rainGain).connect(this.sfx);
+    rain.start();
+
     // engine
     this.engineOsc = ctx.createOscillator();
     this.engineOsc.type = 'sawtooth';
@@ -115,10 +129,11 @@ export class GameAudio {
   setMood(m: Mood) { this.mood = m; }
 
   /** Per-frame continuous sounds. */
-  update(dt: number, s: { throttle: number; speed: number; underwater: number; reeling: number }) {
+  update(dt: number, s: { throttle: number; speed: number; underwater: number; reeling: number; rain?: number }) {
     const ctx = this.ctx;
     if (!ctx) return;
     const t = ctx.currentTime;
+    this.rainGain.gain.setTargetAtTime((s.rain ?? 0) * 0.16 * (1 - s.underwater * 0.7), t, 0.5);
     const sp = Math.min(Math.abs(s.speed) / 30, 1.5);
     this.engineOsc.frequency.setTargetAtTime(38 + sp * 50 + Math.abs(s.throttle) * 8, t, 0.1);
     this.engineOsc2.frequency.setTargetAtTime(19 + sp * 25, t, 0.1);
@@ -201,6 +216,11 @@ export class GameAudio {
   horn() { this.tone(110, 0.8, 'sawtooth', 0.12); this.tone(138.6, 0.8, 'sawtooth', 0.1); }
   zone() { [0, 7, 12, 19].forEach((n, i) => this.tone(mtof(60 + n), 0.5, 'sine', 0.08, 0, i * 0.12)); }
   warn() { this.tone(440, 0.15, 'square', 0.07); this.tone(330, 0.25, 'square', 0.07, 0, 0.16); }
+  thunder(v = 1) {
+    this.noise(2.4, 'lowpass', 400, 0.5 * v, 60, 0.7);
+    this.noise(0.25, 'lowpass', 1500, 0.3 * v);
+    this.tone(55, 1.6, 'sine', 0.25 * v, 30);
+  }
   treasure() { [0, 4, 7, 11, 14, 19].forEach((n, i) => this.tone(mtof(79 + n), 0.18, 'sine', 0.1, 0, i * 0.05)); }
 
   private scheduleMusic() {

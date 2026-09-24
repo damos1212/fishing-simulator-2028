@@ -15,28 +15,39 @@ You need a browser with WebGPU support (current Chrome, Edge or Safari).
 | --- | --- |
 | `npm run dev` | Start the Vite dev server |
 | `npm run build` | Typecheck and build a production bundle into `dist/` |
-| `npm test` | Unit tests for game rules, data balance and world layout |
-| `npm run models` | Regenerate `public/models/*.glb` with Blender (`npm run models -- boat fish` builds a subset) |
+| `npm test` | Unit tests for game rules, progression, data balance and world layout |
+| `npm run models` | Regenerate `public/models/*.glb` with Blender (`npm run models -- boat fish2` builds a subset) |
+
+## What's in the game
+
+- **14 zones** on one connected sea that blend into each other as you sail: Sunny Shallows, Open Sea, Kelp Coast, Coral Kingdom, The Deep Blue, Frostbite Fjord, Candy Lagoon, Toxic Sludge Bay, Magma Rift, Storm Reach, Pirate's Graveyard, Sunken Atlantis, the Drowned Temple and The Void. Hull upgrades unlock them in order.
+- **About 160 creatures** across 23 body types (fish, sharks, rays, eels, jellies, squid, crabs, lobsters, turtles, octopus, seahorses, starfish, sea serpents, whales, dolphins and junk). Some only bite at night or in certain weather. Each zone has a legendary fish.
+- **13 zone bosses**, summoned with Boss Bait. They have a health bar, enrage in phases and surge when you least expect it.
+- **Fights**: big fish yank left or right. Steer against the pull with A/D and pulse the reel so the line doesn't snap.
+- **Day/night cycle and weather**: clear, cloudy, rain, fog and storms with lightning. At night the sea has glowing plankton and the lighthouse beam sweeps the water.
+- **Progression**: 10 upgrade tracks (8 to 12 tiers each), a supplies shop, rotating contracts, 60 achievements, pearls, and a style shop with hats, boat paint, flags, lure skins and fishing line colors.
+- **World**: floating outposts in every zone for selling, restocking and fast travel; treasure chests; fishing hot spots; an aquarium at the harbor that shows off your best catches; dolphins, breaching whales, other fishing boats and a sailing ghost ship.
 
 ## Controls
 
 | Input | Sailing | Underwater |
 | --- | --- | --- |
-| WASD | Throttle and steer | Steer the lure |
+| WASD | Throttle and steer | Steer the lure; A/D counter a fish's pull |
 | Mouse (click to capture), two-finger swipe, or arrow keys | Look around | Look around |
 | Scroll wheel / pinch | Zoom | Zoom |
 | Hold click or Space | Charge the cast; release to throw | Reel in |
 | Hold Shift / right click | | Dive |
-| E | Tackle shop (at the dock) | |
+| 1 - 6 | Use supplies (chum, lucky charm, energy drink, sonar ping, boss bait, golden hook) | Same |
+| E | Shop at the harbor dock or an outpost | |
 | M / Esc / H | Map / pause / horn | |
 
 On a trackpad everything works without capturing the mouse. The camera also swings behind the boat or lure after a moment without manual look input.
 
 ## Layout
 
-- `src/engine/`: WebGPU renderer (toon meshes with inverted-hull outlines, Gerstner ocean, sky, particles, bloom and tonemapping), WGSL shaders, GLB loader, math, procedural meshes
-- `src/world/`: terrain height function and mesh, zone atmosphere blending, scenery placement
-- `src/game/`: game loop, boat, camera, fishing (casting, lure, fish AI, fights, hazards), hot spots, FX, audio synth, economy and saves
-- `src/data/`: zones, fish species and upgrade tracks (tune the game here)
+- `src/engine/`: WebGPU renderer (toon meshes with inverted-hull outlines, Gerstner ocean, sky with sun/moon/stars, particles, bloom and tonemapping), WGSL shaders, GLB loader, math, procedural meshes
+- `src/world/`: terrain height function and mesh, zone atmosphere blending, day/night and weather, scenery placement (outposts, landmarks, props)
+- `src/game/`: game loop, boat, camera, fishing (casting, lure, fish AI, fights, bosses, hazards), ambient life, aquarium, hot spots, FX, audio synth, economy, contracts and achievements, saves
+- `src/data/`: zones, species, upgrade tracks, supplies and cosmetics (tune the game here)
 - `src/ui/`: DOM overlay (HUD, shop, map, catch summary, pause menu)
-- `tools/blender/`: scripts that model the boat, fisherman, lure, harbor, fish body types and props
+- `tools/blender/`: scripts that model the boat, fisherman, hats, lure, harbor, creature body types and zone props

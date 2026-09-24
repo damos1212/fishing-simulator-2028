@@ -30,7 +30,8 @@ export class CameraRig {
     this.pitch = clamp(this.pitch + dy * 0.0024 * sens * (invert ? -1 : 1), this.minPitch, this.maxPitch);
   }
 
-  shake(a: number) { this.shakeAmt = Math.max(this.shakeAmt, a); }
+  shakeScale = 1;
+  shake(a: number) { this.shakeAmt = Math.max(this.shakeAmt, a * this.shakeScale); }
 
   update(dt: number, water: (x: number, z: number) => number, ground: (x: number, z: number) => number, snap = false) {
     const k = snap ? 1 : 1 - Math.exp(-dt * 9);

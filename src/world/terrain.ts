@@ -5,12 +5,12 @@ import { clamp, fbm2, hex, lerp, noise2, type RGB, smoothstep } from '../engine/
 import type { MeshData } from '../engine/glb';
 import { toHalf } from '../engine/renderer';
 
-export const MAP_R = 2600;
-export const WORLD_R = 2250;
+export const MAP_R = 3900;
+export const WORLD_R = 3450;
 const MESH_P = 1.8;
 const MAP_P = 1.6;
 
-export type IslandKind = 'grass' | 'sand' | 'rock' | 'snow' | 'volcano' | 'basalt' | 'ruins';
+export type IslandKind = 'grass' | 'sand' | 'rock' | 'snow' | 'volcano' | 'basalt' | 'ruins' | 'candy' | 'toxic' | 'dark';
 export interface Island { x: number; z: number; r: number; top: number; kind: IslandKind; seed: number }
 
 export const HARBOR = { x: 0, z: 0, plateau: 3.5 };
@@ -31,14 +31,32 @@ export const ISLANDS: Island[] = [
   { x: -1030, z: 150, r: 240, top: 165, kind: 'volcano', seed: 13 },
   { x: -800, z: 320, r: 30, top: 8, kind: 'basalt', seed: 14 },
   { x: -850, z: -70, r: 26, top: 6, kind: 'basalt', seed: 15 },
-  { x: -760, z: 960, r: 55, top: 6, kind: 'ruins', seed: 16 },
-  { x: -610, z: 1120, r: 30, top: 4, kind: 'ruins', seed: 17 },
-  { x: -910, z: 1090, r: 26, top: 3, kind: 'ruins', seed: 18 },
+  { x: -1500, z: 1480, r: 55, top: 6, kind: 'ruins', seed: 16 },
+  { x: -1350, z: 1640, r: 30, top: 4, kind: 'ruins', seed: 17 },
+  { x: -1650, z: 1610, r: 26, top: 3, kind: 'ruins', seed: 18 },
+  { x: 440, z: -760, r: 26, top: 2.5, kind: 'sand', seed: 19 },
+  { x: 560, z: -640, r: 20, top: 2, kind: 'sand', seed: 20 },
+  { x: 380, z: -610, r: 16, top: 2, kind: 'sand', seed: 21 },
+  { x: 1450, z: -900, r: 70, top: 8, kind: 'candy', seed: 22 },
+  { x: 1600, z: -1060, r: 40, top: 5, kind: 'candy', seed: 23 },
+  { x: 1290, z: -760, r: 30, top: 4, kind: 'candy', seed: 24 },
+  { x: 1900, z: 250, r: 80, top: 7, kind: 'toxic', seed: 25 },
+  { x: 2080, z: 430, r: 30, top: 3, kind: 'toxic', seed: 26 },
+  { x: -520, z: -2060, r: 50, top: 18, kind: 'dark', seed: 27 },
+  { x: -300, z: -1850, r: 30, top: 12, kind: 'dark', seed: 28 },
+  { x: -700, z: -1880, r: 24, top: 9, kind: 'dark', seed: 29 },
+  { x: -2000, z: -700, r: 70, top: 6, kind: 'sand', seed: 30 },
+  { x: -1850, z: -830, r: 24, top: 3, kind: 'sand', seed: 31 },
+  { x: 500, z: 1980, r: 40, top: 4, kind: 'ruins', seed: 32 },
 ];
 
 const VOLCANO = ISLANDS.find((i) => i.kind === 'volcano')!;
 const VOID = ZONES.find((z) => z.id === 'void')!;
 const MAGMA_I = ZONES.findIndex((z) => z.id === 'magma');
+const TOXIC_I = ZONES.findIndex((z) => z.id === 'toxic');
+const STORM_I = ZONES.findIndex((z) => z.id === 'storm');
+const ATLANTIS_I = ZONES.findIndex((z) => z.id === 'atlantis');
+const CANDY_I = ZONES.findIndex((z) => z.id === 'candy');
 const TEMPLE_I = ZONES.findIndex((z) => z.id === 'temple');
 const VOID_I = ZONES.findIndex((z) => z.id === 'void');
 
@@ -59,7 +77,7 @@ function islandHeight(isl: Island, x: number, z: number, base: number): number {
     if (t >= 1) h = Math.min(h, -0.6);
     return Math.max(base, h);
   }
-  const steep = isl.kind === 'rock' || isl.kind === 'snow';
+  const steep = isl.kind === 'rock' || isl.kind === 'snow' || isl.kind === 'dark';
   if (t < 1) {
     const shoulder = steep ? smoothstep(0.7, 0.97, t) : smoothstep(0.45, 0.95, t);
     let top = isl.top;
@@ -83,6 +101,12 @@ export function heightAt(x: number, z: number): number {
   // magma trenches, temple pits
   if (w[MAGMA_I] > 0) h -= 90 * w[MAGMA_I] * smoothstep(0.35, 0.7, Math.abs(noise2(x * 0.004, z * 0.004)));
   if (w[TEMPLE_I] > 0) h -= 120 * w[TEMPLE_I] * smoothstep(0.2, 0.7, noise2(x * 0.005 + 9, z * 0.005));
+  if (w[STORM_I] > 0) h -= 70 * w[STORM_I] * Math.abs(noise2(x * 0.008 + 4, z * 0.008));
+  if (w[ATLANTIS_I] > 0.05) {
+    // terraced plazas of the sunken city
+    const terr = Math.round(h / 45) * 45 + 3 * noise2(x * 0.05, z * 0.05);
+    h = lerp(h, terr, w[ATLANTIS_I] * 0.85);
+  }
   h = Math.min(h, -2.5);
   const edge = Math.hypot(x, z);
   if (edge > WORLD_R) h = lerp(h, -1200, smoothstep(WORLD_R, MAP_R, edge));
@@ -106,6 +130,12 @@ function glowMask(x: number, z: number, h: number, w: number[]): number {
   }
   if (w[TEMPLE_I] > 0.05 && h < -10) g = Math.max(g, step(0.82, noise2(x * 0.05, z * 0.05)) * w[TEMPLE_I] * 0.7);
   if (w[VOID_I] > 0.05 && h < -5) g = Math.max(g, step(0.75, noise2(x * 0.08, z * 0.08)) * w[VOID_I]);
+  if (w[TOXIC_I] > 0.05 && h < 1) g = Math.max(g, smoothstep(0.35, 0.6, noise2(x * 0.03 + 7, z * 0.03)) * w[TOXIC_I]);
+  if (w[ATLANTIS_I] > 0.05 && h < -10) {
+    const road = Math.max(step(0.93, Math.abs(Math.sin(x * 0.07))), step(0.93, Math.abs(Math.sin(z * 0.07))));
+    g = Math.max(g, road * w[ATLANTIS_I] * 0.8);
+  }
+  if (w[CANDY_I] > 0.05 && h < -3) g = Math.max(g, step(0.9, noise2(x * 0.2, z * 0.2)) * w[CANDY_I] * 0.6);
   return g;
 }
 const step = (e: number, x: number) => (x >= e ? 1 : 0);
@@ -114,6 +144,8 @@ const C = {
   sand: hex('#f0d9a0'), grass: hex('#7dc85a'), grass2: hex('#5ea845'), rock: hex('#9a8f82'), cliff: hex('#7f7468'),
   snow: hex('#f5f9ff'), iceRock: hex('#9fb3c4'), basalt: hex('#3b3533'), blackSand: hex('#4a4240'), ruins: hex('#6f7f68'),
   moss: hex('#4f6a4a'), wetSand: hex('#d9c08a'),
+  candySand: hex('#ffc8e4'), candyGrass: hex('#9af0c8'), candyRock: hex('#c08ae0'),
+  sludge: hex('#6a6a48'), sludgeRock: hex('#4a4a3a'), darkRock: hex('#3a3e46'), darkGrass: hex('#4a5a4a'),
 };
 const floorColors: RGB[] = ZONES.map((z) => hex(z.env.floor));
 const openFloor = hex(OPEN_SEA.env.floor);
@@ -134,7 +166,8 @@ function colorAt(x: number, z: number, h: number, slope: number, out: number[]) 
   let c: RGB = [r, g, b];
   const isl = nearestIsland(x, z);
   const kind = isl?.kind;
-  const beach: RGB = kind === 'basalt' || kind === 'volcano' ? C.blackSand : kind === 'snow' ? C.iceRock : C.sand;
+  const beach: RGB = kind === 'basalt' || kind === 'volcano' ? C.blackSand : kind === 'snow' ? C.iceRock : kind === 'candy' ? C.candySand
+    : kind === 'toxic' ? C.sludge : kind === 'dark' ? C.darkRock : C.sand;
   // underwater: blend from beach sand to zone floor with depth
   if (h < 0.4) {
     const t = smoothstep(0, 30, -h);
@@ -149,6 +182,9 @@ function colorAt(x: number, z: number, h: number, slope: number, out: number[]) 
       case 'snow': land = slope > 0.45 ? C.iceRock : C.snow; break;
       case 'volcano': case 'basalt': land = C.basalt; break;
       case 'ruins': land = slope > 0.3 ? C.ruins : C.moss; break;
+      case 'candy': land = slope > 0.4 ? C.candyRock : C.candyGrass; break;
+      case 'toxic': land = slope > 0.4 ? C.sludgeRock : C.sludge; break;
+      case 'dark': land = slope > 0.35 ? C.darkRock : C.darkGrass; break;
       default: land = slope > 0.4 ? C.rock : noise2(x * 0.05, z * 0.05) > 0.2 ? C.grass2 : C.grass;
     }
     c = h < 1.4 ? beach : land;
@@ -160,7 +196,7 @@ function colorAt(x: number, z: number, h: number, slope: number, out: number[]) 
 const warp = (u: number, R: number, P: number) => Math.sign(u) * Math.pow(Math.abs(u), P) * R;
 
 /** Builds the terrain mesh on a warped grid (dense around the harbor). */
-export function buildTerrainMesh(N = 480): MeshData {
+export function buildTerrainMesh(N = 600): MeshData {
   const V = N + 1;
   const pos = new Float32Array(V * V * 3);
   for (let j = 0; j < V; j++) for (let i = 0; i < V; i++) {
@@ -195,7 +231,7 @@ export function buildTerrainMesh(N = 480): MeshData {
 }
 
 /** Half-float height map in the ocean shader's warped layout (frame.mapInfo). */
-export function buildHeightMap(size = 640): Uint16Array {
+export function buildHeightMap(size = 800): Uint16Array {
   const out = new Uint16Array(size * size);
   for (let j = 0; j < size; j++) for (let i = 0; i < size; i++) {
     const x = warp(((i + 0.5) / size) * 2 - 1, MAP_R, MAP_P), z = warp(((j + 0.5) / size) * 2 - 1, MAP_R, MAP_P);

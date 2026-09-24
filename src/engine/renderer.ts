@@ -93,7 +93,7 @@ export class Renderer {
   private partBGL: GPUBindGroupLayout;
   private partBuf!: GPUBuffer;
   private partBG!: GPUBindGroup;
-  readonly parts = { data: new Float32Array(4096 * PART_FLOATS), count: 0, max: 4096 };
+  readonly parts = { data: new Float32Array(8192 * PART_FLOATS), count: 0, max: 8192 };
 
   private unlitPipe: GPURenderPipeline;
   private unlitVB: GPUBuffer;
@@ -326,14 +326,14 @@ export class Renderer {
   }
 
   /** Pushes a particle: kind 0 soft, 1 ring, 2 flat water ring, 3 sparkle, 4 hard disc. alpha 0 = additive. */
-  particle(x: number, y: number, z: number, size: number, r: number, g: number, b: number, alpha: number, kind = 0, rot = 0) {
+  particle(x: number, y: number, z: number, size: number, r: number, g: number, b: number, alpha: number, kind = 0, rot = 0, stretch = 1) {
     const p = this.parts;
     if (p.count >= p.max) return;
     const o = p.count++ * PART_FLOATS;
     const d = p.data;
     d[o] = x; d[o + 1] = y; d[o + 2] = z; d[o + 3] = size;
     d[o + 4] = r; d[o + 5] = g; d[o + 6] = b; d[o + 7] = alpha;
-    d[o + 8] = kind; d[o + 9] = rot;
+    d[o + 8] = kind; d[o + 9] = rot; d[o + 10] = stretch; d[o + 11] = 0;
   }
 
   /** Pushes one unlit triangle vertex (premultiplied by alpha in shader). */

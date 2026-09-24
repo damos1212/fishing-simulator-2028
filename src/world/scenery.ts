@@ -1,5 +1,5 @@
 // Static world dressing: harbor buildings, island vegetation, zone landmarks and seafloor props.
-import { ZONES, zoneWeights } from '../data/zones';
+import { ZONES, type ZoneId, zoneWeights } from '../data/zones';
 import { hex, mat4, type Mat4, rng, Vec3 } from '../engine/math';
 import { Inst, type GpuMesh, type GpuModel, type Renderer } from '../engine/renderer';
 import type { Assets } from '../game/assets';
@@ -19,6 +19,8 @@ interface Prop {
 
 const zoneIdx = (id: string) => ZONES.findIndex((z) => z.id === id);
 
+export interface Outpost { zone: ZoneId; name: string; pos: Vec3; yaw: number; dock: Vec3 }
+
 export class Scenery {
   props: Prop[] = [];
   terrain: GpuMesh;
@@ -29,6 +31,9 @@ export class Scenery {
   lighthouseTop = new Vec3();
   volcanoTop = new Vec3();
   chests: { pos: Vec3; zone: number; taken: number }[] = [];
+  outposts: Outpost[] = [];
+  aquarium = { pos: new Vec3(), yaw: 0, halfX: 8.5, halfZ: 5, depth: 2.6 };
+  ghost = { center: new Vec3(-2000, 0, -700), radius: 260, pos: new Vec3(), heading: 0 };
   private bigFishM = mat4.create();
   private shopM = mat4.create();
   private bigFishPivot = new Vec3();
@@ -38,6 +43,7 @@ export class Scenery {
     this.buildHarbor();
     this.buildIslands();
     this.buildZones();
+    this.buildExpansion();
   }
 
   private add(mesh: GpuMesh | GpuModel, x: number, y: number, z: number, yaw: number, s: number, inst: Inst, maxDist: number, under = false, pitch = 0, roll = 0) {
@@ -95,7 +101,7 @@ export class Scenery {
         const x = isl.x + Math.cos(ang) * dist, z = isl.z + Math.sin(ang) * dist;
         const h = heightAt(x, z);
         if (h < 1.2) continue;
-        if (isl === ISLANDS[0] && (Math.hypot(x + 15, z - 29) < 11 || Math.hypot(x - 30, z + 6) < 6 || (Math.abs(x) < 4 && z > 40) || (x > -28 && x < 12 && z > 32))) continue;
+        if (isl === ISLANDS[0] && (Math.hypot(x + 15, z - 29) < 11 || Math.hypot(x - 30, z + 6) < 6 || (Math.abs(x) < 4 && z > 40) || (x > -28 && x < 12 && z > 32) || (x > -2 && x < 24 && z > 12 && z < 34))) continue;
         if ((isl.kind === 'grass' || isl.kind === 'sand') && r() < 0.7) {
           this.add(this.a.palm, x, h - 0.2, z, r() * 6.28, 0.8 + r() * 0.5, palmInst, 1600);
         } else {
@@ -234,7 +240,197 @@ export class Scenery {
     }
   }
 
+  private buildExpansion() {
+    const { models } = this.a;
+    const r = rng(2024);
+    // aquarium pool next to the shop
+    const ax = 10, az = 21;
+    // a shallow pool sitting on the ground: the rim hides the terrain, the water sits above it
+    let ay = -Infinity;
+    for (let dx = -9; dx <= 9; dx += 3) for (let dz = -5; dz <= 5; dz += 2.5) ay = Math.max(ay, heightAt(ax + dx, az + dz));
+    ay += 0.05;
+    this.aquarium.pos.set(ax, ay, az);
+    this.add(models.aquarium, ax, ay, az, 0, 1, Inst.solid(0, 0.05), 2500);
+
+    // outposts: one floating dock per zone
+    const NAMES: Partial<Record<ZoneId, string>> = {
+      kelp: 'Kelp Corner', coral: 'Reef Rest', deepblue: 'Blue Buoy Station', frost: 'Frostbite Hut', candy: 'Sugar Shack',
+      toxic: 'Hazmat Hub', magma: 'Ember Outpost', storm: 'Stormwatch', pirate: 'Skull Cove', atlantis: "Poseidon's Porch",
+      temple: 'Last Light', void: 'Event Horizon',
+    };
+    const glow = Inst.solid(2);
+    glow.a.set([1, 0.85, 0.55, 3.5]);
+    const wood = Inst.solid(0, 0.045);
+    const dockLocal = models.outpost.nodes.get('DockSpot')!;
+    for (const z of ZONES) {
+      const name = NAMES[z.id];
+      if (!name) continue;
+      let found: Vec3 | null = null;
+      search: for (const f of [0.3, 0.45, 0.6, 0.15]) {
+        for (let k = 0; k < 16; k++) {
+          const a = (k / 16) * Math.PI * 2 + z.x * 0.001;
+          const x = z.x + Math.cos(a) * z.radius * f, zz = z.z + Math.sin(a) * z.radius * f;
+          let ok = true;
+          for (let j = 0; j < 8 && ok; j++) {
+            const b = (j / 8) * Math.PI * 2;
+            if (heightAt(x + Math.cos(b) * 30, zz + Math.sin(b) * 30) > -8) ok = false;
+          }
+          if (ok) { found = new Vec3(x, 0, zz); break search; }
+        }
+      }
+      if (!found) continue;
+      const yaw = Math.atan2(z.x - found.x, z.z - found.z);
+      const o: Outpost = { zone: z.id, name, pos: found, yaw, dock: new Vec3() };
+      const m = mat4.compose(mat4.create(), found.x, 0, found.z, yaw);
+      o.dock.set(dockLocal[12], 0, dockLocal[14]).applyMat4(m);
+      o.dock.y = 0;
+      this.outposts.push(o);
+      const p = this.add(models.outpost, found.x, 0, found.z, yaw, 1, wood, 2600);
+      p.skip = (mesh) => mesh.name === 'Glow';
+      this.add(models.outpost.byName.get('Glow')!, found.x, 0, found.z, yaw, 1, glow, 2600);
+    }
+
+    const Z = (id: ZoneId) => zoneIdx(id);
+    const woodWreck = Inst.solid(0, 0.06);
+    const wreckCounts: [ZoneId, number][] = [['pirate', 7], ['deepblue', 2], ['kelp', 1], ['frost', 1], ['temple', 2], ['atlantis', 1], ['storm', 2]];
+    for (const [zid, n] of wreckCounts) {
+      this.scatter(Z(zid), n, 300 + Z(zid), (x, z, h, rr) => {
+        if (h > -20) return;
+        this.add(models.shipwreck, x, h + 1, z, rr() * 6.28, 1, woodWreck, 260, true);
+        this.add(models.anchor, x + 14, heightAt(x + 14, z) + 0.2, z + 6, rr() * 6.28, 1.2, woodWreck, 200, true, 1.2, 0.3);
+      });
+    }
+
+    // coral kingdom: dense reef
+    const coralColors = ['#ff6a8a', '#ffa03a', '#b070ff', '#ff5a5a', '#5ad0c0', '#ffd23a', '#3ad0ff', '#ff7ae0'];
+    const corals = coralColors.map((c) => this.tint(c, 0.03));
+    this.scatter(Z('coral'), 700, 401, (x, z, h, rr) => {
+      if (h > -1.5 || h < -65) return;
+      this.add(models.coral, x, h - 0.2, z, rr() * 6.28, 1.4 + rr() * 2.6, corals[Math.floor(rr() * corals.length)], 170, true);
+    });
+    const grassInst = Inst.solid(0, 0);
+    grassInst.c[3] = 7;
+    grassInst.amp = 1.5;
+    for (const zid of ['shallows', 'coral', 'kelp'] as ZoneId[]) {
+      this.scatter(Z(zid), 400, 402 + Z(zid), (x, z, h, rr) => {
+        if (h > -1.5 || h < -50) return;
+        const p = this.add(this.a.seagrass, x, h - 0.1, z, rr() * 6.28, 1 + rr() * 1.2, grassInst, 120, true);
+        p.phaseSpeed = 1.2;
+      });
+    }
+    const shellInsts = ['#fff0e0', '#ffd0e0', '#e0d0ff'].map((c) => this.tint(c, 0.02));
+    for (const zid of ['shallows', 'coral', 'atlantis'] as ZoneId[]) {
+      this.scatter(Z(zid), 120, 410 + Z(zid), (x, z, h, rr) => {
+        if (h > -1.5) return;
+        this.add(models.shell, x, h, z, rr() * 6.28, 0.8 + rr() * 1.4, shellInsts[Math.floor(rr() * 3)], 110, true, 1.4, rr());
+      });
+    }
+
+    // candy lagoon
+    const candyTints = ['#ffffff', '#ffd0f0', '#d0f0ff', '#fff0b0'].map((c) => this.tint(c, 0.05));
+    const gum = ['#ff5aa0', '#70e070', '#ffd040', '#7a8aff', '#ff8a3a'].map((c) => this.tint(c, 0.05));
+    this.scatter(Z('candy'), 50, 420, (x, z, h, rr) => {
+      const s = 0.8 + rr() * 1.5;
+      if (h > 1.5) this.add(models.lollipop, x, h - 0.5, z, rr() * 6.28, s, candyTints[0], 2200);
+      else if (h > -30) this.add(models.candycane, x, Math.max(h, -6) - 1, z, rr() * 6.28, s * 1.4, candyTints[0], 2200);
+    });
+    this.scatter(Z('candy'), 160, 421, (x, z, h, rr) => {
+      this.add(models.gumdrop, x, h - 0.2, z, rr() * 6.28, 1 + rr() * 3, gum[Math.floor(rr() * gum.length)], h > 0 ? 1800 : 180, h < 0);
+    });
+    const candyMain = ISLANDS.find((i) => i.kind === 'candy')!;
+    this.add(models.icecream, candyMain.x, heightAt(candyMain.x, candyMain.z) - 1, candyMain.z, 0.4, 1.3, Inst.solid(0, 0.06), 3500);
+
+    // toxic sludge bay
+    const toxicMain = ISLANDS.find((i) => i.kind === 'toxic')!;
+    const fac = this.add(models.factory, toxicMain.x + 8, heightAt(toxicMain.x + 8, toxicMain.z) - 0.5, toxicMain.z, 0.6, 1, Inst.solid(0, 0.06), 3500);
+    fac.skip = (m) => m.name === 'Glow';
+    const sludge = Inst.solid(2);
+    sludge.a.set([0.6, 1, 0.2, 3]);
+    this.add(models.factory.byName.get('Glow')!, toxicMain.x + 8, heightAt(toxicMain.x + 8, toxicMain.z) - 0.5, toxicMain.z, 0.6, 1, sludge, 3500);
+    this.factoryTop.set(toxicMain.x + 8, 40, toxicMain.z);
+    const barrelInst = Inst.solid(0, 0.04);
+    const barrelGlow = Inst.solid(2);
+    barrelGlow.a.set([0.6, 1, 0.2, 3]);
+    this.scatter(Z('toxic'), 90, 430, (x, z, h, rr) => {
+      const floating = rr() < 0.35 && h < -3;
+      const y = floating ? -0.6 : h + 0.2;
+      const p = this.add(models.barrel, x, y, z, rr() * 6.28, 1.3, barrelInst, floating ? 900 : 180, !floating, floating ? 0.3 : 1.2 * rr(), rr());
+      p.skip = (m) => m.name === 'Glow';
+      this.twin(p, models.barrel.byName.get('Glow')!, barrelGlow);
+    });
+
+    // storm reach spires
+    const spireInst = Inst.solid(0, 0.08);
+    const spireGlow = Inst.solid(2);
+    spireGlow.a.set([0.6, 0.95, 1, 4]);
+    this.scatter(Z('storm'), 26, 440, (x, z, h, rr) => {
+      if (h > -6) return;
+      const s = 0.8 + rr() * 1.2;
+      const p = this.add(models.spire, x, h * 0.3 - 4, z, rr() * 6.28, s, spireInst, 3200);
+      p.skip = (m) => m.name === 'Glow';
+      this.twin(p, models.spire.byName.get('Glow')!, spireGlow);
+      this.spires.push(p.pos.clone().add(new Vec3(0, 45 * s, 0)));
+    });
+
+    // pirate's graveyard
+    const pirMain = ISLANDS.find((i) => i.x === -2000)!;
+    const sk = this.add(models.skullrock, pirMain.x, heightAt(pirMain.x, pirMain.z) - 6, pirMain.z, 0.8, 0.9, Inst.solid(0, 0.08), 3800);
+    sk.skip = (m) => m.name === 'Glow';
+    const eyeGlow = Inst.solid(2);
+    eyeGlow.a.set([0.3, 1, 0.7, 5]);
+    this.twin(sk, models.skullrock.byName.get('Glow')!, eyeGlow);
+
+    // sunken atlantis
+    const marble = this.tint('#ece6d8', 0.06);
+    const goldGlow = Inst.solid(2);
+    goldGlow.a.set([1, 0.85, 0.4, 4]);
+    this.scatter(Z('atlantis'), 14, 450, (x, z, h, rr) => {
+      if (h > -30) return;
+      const d = this.add(models.dome, x, h - 0.5, z, rr() * 6.28, 0.8 + rr() * 0.8, Inst.solid(0, 0.06), 320, true);
+      d.skip = (m) => m.name === 'Glow';
+      this.twin(d, models.dome.byName.get('Glow')!, goldGlow);
+    });
+    this.scatter(Z('atlantis'), 30, 451, (x, z, h, rr) => {
+      if (h > -20) return;
+      const kind = rr();
+      if (kind < 0.35) this.add(models.statue, x, h - 0.3, z, rr() * 6.28, 1 + rr() * 0.8, marble, 260, true);
+      else if (kind < 0.6) this.add(models.arch, x, h - 0.3, z, rr() * 6.28, 1 + rr() * 0.5, marble, 260, true);
+      else this.add(models.pillar, x, h - 0.4, z, rr() * 6.28, 2 + rr() * 2, marble, 240, true, (rr() - 0.5) * 0.4, (rr() - 0.5) * 0.4);
+    });
+    const atlIsl = ISLANDS.find((i) => i.x === 500 && i.z === 1980)!;
+    this.add(models.statue, atlIsl.x, heightAt(atlIsl.x, atlIsl.z) - 0.4, atlIsl.z, 2.5, 1.4, this.tint('#ffd878', 0.06, 0.1), 3000);
+
+    // chests in the new zones
+    for (const zid of ['coral', 'candy', 'toxic', 'storm', 'pirate', 'atlantis'] as ZoneId[]) {
+      const zi = Z(zid);
+      this.scatter(zi, zid === 'pirate' ? 12 : 5, 470 + zi, (x, z, h) => {
+        if (h > -6) return;
+        this.chests.push({ pos: new Vec3(x, h + 0.2, z), zone: zi, taken: 0 });
+      });
+    }
+    void r;
+  }
+
+  /** Draws `mesh` with the same transform/visibility as prop `p` (glowing parts etc). */
+  private twin(p: Prop, mesh: GpuMesh, inst: Inst) {
+    this.props.push({ mesh, m: p.m, inst, pos: p.pos, maxDist: p.maxDist, under: p.under });
+  }
+
+  factoryTop = new Vec3();
+  spires: Vec3[] = [];
+  private ghostM = mat4.create();
+
   draw(cam: Vec3, underwater: boolean, time: number) {
+    // ghost ship sails a slow circle around the graveyard
+    const g = this.ghost;
+    const ga = time * 0.02;
+    g.pos.set(g.center.x + Math.cos(ga) * g.radius, Math.sin(time * 0.7) * 0.3, g.center.z + Math.sin(ga) * g.radius);
+    g.heading = Math.atan2(-Math.sin(ga), Math.cos(ga));
+    if (!underwater && g.pos.distanceXZ(cam) < 3500) {
+      mat4.compose(this.ghostM, g.pos.x, g.pos.y, g.pos.z, g.heading, Math.sin(time * 0.5) * 0.03, Math.sin(time * 0.6) * 0.05, 1);
+      this.r.draw(this.a.models.ghostship.byName.get('Ghostship')!, this.ghostM, ghostInst);
+      this.r.draw(this.a.models.ghostship.byName.get('Glow')!, this.ghostM, ghostGlow);
+    }
     const r = this.r;
     r.draw(this.terrain, mat4.create(), this.terrainInst);
     for (const p of this.props) {
@@ -268,3 +464,7 @@ const tmpM = mat4.create();
 const bigFishInst = Inst.solid(0, 0.05);
 const chestInst = Inst.solid(0, 0.03);
 chestInst.a.set([1, 1, 1, 0.15]);
+const ghostInst = Inst.solid(0, 0.06);
+ghostInst.a.set([0.75, 0.9, 0.85, 0.1]);
+const ghostGlow = Inst.solid(2);
+ghostGlow.a.set([0.4, 1, 0.75, 5]);

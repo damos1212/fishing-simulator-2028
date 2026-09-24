@@ -1,14 +1,22 @@
 // Blends zone atmospheres by position and pushes them into the frame uniforms.
 import { OPEN_SEA, ZONES, type ZoneEnv, zoneWeights } from '../data/zones';
 import type { FrameState } from '../engine/frame';
-import { clamp, hex, type RGB } from '../engine/math';
+import { clamp, hex, mixRGB, type RGB } from '../engine/math';
+import type { TimeWeather } from './timeweather';
+
+const NIGHT_TOP: RGB = [0.002, 0.004, 0.018];
+const NIGHT_HORIZON: RGB = [0.012, 0.02, 0.05];
+const DUSK: RGB = [1.0, 0.42, 0.22];
+const DUSK_SUN: RGB = [1.0, 0.55, 0.3];
+const MOON: RGB = [0.55, 0.65, 0.95];
+const scaleRGB = (c: RGB, k: number): RGB => [c[0] * k, c[1] * k, c[2] * k];
 
 type NumKey = { [K in keyof ZoneEnv]: ZoneEnv[K] extends number ? K : never }[keyof ZoneEnv];
 type ColKey = { [K in keyof ZoneEnv]: ZoneEnv[K] extends string ? K : never }[keyof ZoneEnv];
 
 const COLOR_KEYS: ColKey[] = ['skyTop', 'skyHorizon', 'fog', 'sun', 'cloud', 'waterShallow', 'waterDeep', 'uw', 'uwDeep', 'ambient', 'ground', 'lava', 'floor'];
 const NUM_KEYS: NumKey[] = ['fogDensity', 'sunIntensity', 'cloudCover', 'stars', 'nebula', 'sparkle', 'uwDensity', 'darkDepth', 'lightFalloff',
-  'caustics', 'ambientIntensity', 'waves', 'lavaStrength', 'voidAmount', 'frost', 'eerie'];
+  'caustics', 'ambientIntensity', 'waves', 'lavaStrength', 'voidAmount', 'frost', 'eerie', 'storm'];
 
 interface LinEnv { c: Record<ColKey, RGB>; n: Record<NumKey, number> }
 const lin = (e: ZoneEnv): LinEnv => ({
@@ -50,19 +58,41 @@ export class Environment {
     for (const k of NUM_KEYS) this.cur.n[k] += (t.n[k] - this.cur.n[k]) * a;
   }
 
-  apply(f: FrameState, camDepth: number, underwater: boolean) {
+  apply(f: FrameState, camDepth: number, underwater: boolean, tw: TimeWeather) {
     const { c, n } = this.cur;
-    f.skyTop = c.skyTop; f.skyHorizon = c.skyHorizon; f.fogColor = c.fog; f.sunColor = c.sun; f.cloudColor = c.cloud;
-    f.waterShallow = c.waterShallow; f.waterDeep = c.waterDeep; f.uwColor = c.uw; f.uwDeep = c.uwDeep;
-    f.ambient = c.ambient; f.ground = c.ground; f.lava = c.lava;
-    f.fogDensity = n.fogDensity; f.sunIntensity = n.sunIntensity; f.cloudCover = n.cloudCover; f.stars = n.stars;
-    f.nebula = n.nebula; f.sparkle = n.sparkle; f.darkDepth = n.darkDepth; f.lightFalloff = n.lightFalloff;
-    f.causticStrength = n.caustics; f.ambientIntensity = n.ambientIntensity; f.waveScale = n.waves;
+    const nk = tw.night * (1 - n.voidAmount);
+    const dusk = tw.dusk * (1 - n.voidAmount) * (1 - nk * 0.5);
+    const wet = Math.max(tw.rain, tw.storm);
+    const grey: RGB = [0.32, 0.35, 0.4];
+    f.skyTop = mixRGB(mixRGB(c.skyTop, grey, wet * 0.55), NIGHT_TOP, nk);
+    f.skyHorizon = mixRGB(mixRGB(mixRGB(c.skyHorizon, DUSK, dusk * 0.55), grey, wet * 0.5), NIGHT_HORIZON, nk);
+    f.fogColor = mixRGB(mixRGB(mixRGB(c.fog, DUSK, dusk * 0.45), [0.5, 0.53, 0.56], wet * 0.5 + tw.fog * 0.3), NIGHT_HORIZON, nk);
+    f.sunColor = mixRGB(mixRGB(c.sun, DUSK_SUN, dusk * 0.7), MOON, nk);
+    f.cloudColor = scaleRGB(mixRGB(c.cloud, [0.3, 0.32, 0.36], tw.storm * 0.75 + tw.rain * 0.25), 1 - nk * 0.85);
+    f.waterShallow = scaleRGB(mixRGB(c.waterShallow, grey, wet * 0.25), 1 - nk * 0.75);
+    f.waterDeep = scaleRGB(c.waterDeep, 1 - nk * 0.7);
+    f.uwColor = scaleRGB(c.uw, 1 - nk * 0.6);
+    f.uwDeep = scaleRGB(c.uwDeep, 1 - nk * 0.5);
+    f.ambient = scaleRGB(c.ambient, 1 - nk * 0.55);
+    f.ground = c.ground;
+    f.lava = c.lava;
+    f.fogDensity = n.fogDensity * (1 + 4 * tw.fog + 1.2 * tw.rain + 1.5 * tw.storm);
+    f.sunIntensity = (n.sunIntensity * (1 - nk) + 0.55 * nk) * (1 - 0.3 * tw.rain - 0.3 * tw.storm - 0.2 * tw.fog) + tw.lightning * 2.5;
+    f.cloudCover = Math.min(1, Math.max(n.cloudCover, tw.clouds));
+    f.stars = Math.max(n.stars, nk * (1 - tw.clouds * 0.85));
+    f.nebula = n.nebula; f.sparkle = n.sparkle * (1 - wet * 0.7); f.darkDepth = n.darkDepth; f.lightFalloff = n.lightFalloff;
+    f.causticStrength = n.caustics * (1 - nk) * (1 - tw.clouds * 0.5);
+    f.ambientIntensity = n.ambientIntensity * (1 - nk * 0.35) + tw.lightning * 0.8;
+    f.waveScale = n.waves * (1 + 0.9 * tw.storm + 0.25 * tw.rain);
     f.lavaStrength = n.lavaStrength; f.voidAmount = n.voidAmount; f.frost = n.frost; f.eerie = n.eerie;
+    f.night = nk;
+    f.rain = tw.rain;
     f.cameraUnderwater = underwater ? 1 : 0;
     // visibility shrinks in the dark deep
     f.uwDensity = n.uwDensity * (1 + clamp(camDepth / n.darkDepth, 0, 3) * 0.6);
   }
+
+  get storm() { return this.cur.n.storm; }
 
   get lavaStrength() { return this.cur.n.lavaStrength; }
   get voidAmount() { return this.cur.n.voidAmount; }

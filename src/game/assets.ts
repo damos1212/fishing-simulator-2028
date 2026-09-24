@@ -1,10 +1,13 @@
 import type { Archetype } from '../data/fish';
 import { loadGLB } from '../engine/glb';
-import { buoyMesh, flagMesh, kelpMesh, palmMesh, planetMesh, reelMesh, rodSegmentMesh } from '../engine/procgen';
+import { buoyMesh, flagMesh, kelpMesh, palmMesh, planetMesh, reelMesh, rodSegmentMesh, seagrassMesh } from '../engine/procgen';
 import type { GpuMesh, GpuModel, Renderer } from '../engine/renderer';
 
-const ARCHETYPES: Archetype[] = ['slim', 'tall', 'round', 'eel', 'shark', 'ray', 'jelly', 'squid', 'angler', 'whale', 'sword', 'eyeball'];
-const MODELS = ['boat', 'fisher', 'lure', 'pier', 'shop', 'lighthouse', 'rock', 'coral', 'iceberg', 'pillar', 'tentacle', 'crystal', 'gull', 'chest'] as const;
+const ARCHETYPES: Archetype[] = ['slim', 'tall', 'round', 'eel', 'shark', 'ray', 'jelly', 'squid', 'angler', 'whale', 'sword', 'eyeball',
+  'crab', 'lobster', 'turtle', 'octopus', 'seahorse', 'starfish', 'serpent', 'dolphin', 'boot', 'bottle', 'duck'];
+const MODELS = ['boat', 'fisher', 'lure', 'pier', 'shop', 'lighthouse', 'rock', 'coral', 'iceberg', 'pillar', 'tentacle', 'crystal', 'gull', 'chest',
+  'shipwreck', 'ghostship', 'skullrock', 'barrel', 'factory', 'lollipop', 'candycane', 'gumdrop', 'icecream', 'dome', 'statue', 'arch', 'spire',
+  'outpost', 'aquarium', 'shell', 'anchor', 'hats'] as const;
 export type ModelName = (typeof MODELS)[number];
 
 export interface Assets {
@@ -17,6 +20,7 @@ export interface Assets {
   rodSeg: GpuMesh;
   reel: GpuMesh;
   flag: GpuMesh;
+  seagrass: GpuMesh;
 }
 
 export async function loadAssets(r: Renderer, progress: (p: number) => void): Promise<Assets> {
@@ -41,5 +45,6 @@ export async function loadAssets(r: Renderer, progress: (p: number) => void): Pr
     rodSeg: r.registerMesh(rodSegmentMesh()),
     reel: r.registerMesh(reelMesh()),
     flag: r.registerMesh(flagMesh()),
+    seagrass: r.registerMesh(seagrassMesh()),
   };
 }

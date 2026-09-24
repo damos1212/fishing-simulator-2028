@@ -23,7 +23,7 @@ struct Frame {
   res: vec4f,          // w, h, 1/w, 1/h
   misc: vec4f,         // void, frost, underwater light falloff, caustics strength
   ocean: vec4f,        // grid offset x, z, extent, warp power
-  mapInfo: vec4f,      // height map extent, warp power, -, -
+  mapInfo: vec4f,      // height map extent, warp power, night (0..1), rain (0..1)
   boat: vec4f,         // x, z, heading, speed
   lava: vec4f,         // rgb, strength
   wake: array<vec4f, 16>, // x, z, age (s), strength
@@ -213,6 +213,31 @@ fn animate(p: vec3f, inst: Inst) -> vec3f {
     case 8u: { // bird wing flap
       let ax = abs(p.x);
       q.y += sin(ph) * amp * ax * ax;
+    }
+    case 9u: { // crab / lobster: scuttling legs and snapping claws
+      let ax = abs(p.x);
+      let leg = smoothstep(0.16, 0.3, ax) * step(p.y, 0.16);
+      let s = sign(p.x) * 1.6;
+      q.y += max(sin(ph * 2.0 + p.z * 9.0 + s), 0.0) * amp * 0.7 * leg;
+      q.z += cos(ph * 2.0 + p.z * 9.0 + s) * amp * 0.4 * leg;
+      let claw = smoothstep(0.4, 0.55, p.z);
+      q.x += sin(ph * 1.5) * amp * 0.35 * claw * sign(p.x);
+    }
+    case 10u: { // turtle flippers
+      let ax = abs(p.x);
+      let fl = smoothstep(0.24, 0.4, ax) * (ax - 0.24);
+      let off = select(0.0, 3.14159, p.z < 0.0);
+      q.y += sin(ph + off) * amp * fl * 3.0;
+      q.z += cos(ph + off) * amp * fl * 1.2;
+    }
+    case 11u: { // seahorse: fluttering fin, curling tail
+      q.x += sin(ph * 4.0 + p.y * 12.0) * amp * 0.08;
+      let tail = clamp(-0.15 - p.y, 0.0, 1.0);
+      q.z += sin(ph * 0.7) * amp * tail * 0.6;
+    }
+    case 12u: { // starfish: slowly curling arms
+      let r = length(p.xz);
+      q.y += sin(ph * 0.6 + atan2(p.z, p.x) * 2.0) * amp * r * r * 0.8;
     }
     default: {}
   }
@@ -459,6 +484,21 @@ fn terrainHeight(xz: vec2f) -> f32 {
   let sparkle = sp * dotShape * smoothstep(0.3, 0.7, dot(n, frame.sunDir.xyz)) * (1.0 - smoothstep(20.0, 120.0, camDist));
   col += sparkle * frame.waterDeep.w * frame.sunColor.rgb * 1.5;
 
+  // rain ripples
+  let rain = frame.mapInfo.w;
+  if (rain > 0.01) {
+    let rc = floor(in.xz * 0.8);
+    let rf = fract(in.xz * 0.8) - 0.5 - (hash22(rc) - 0.5) * 0.4;
+    let tt = fract(t * 0.9 + hash21(rc));
+    let ring = (1.0 - smoothstep(0.0, 0.05, abs(length(rf) - tt * 0.45))) * (1.0 - tt);
+    col += ring * rain * 0.35 * in.fade * max(frame.sunDir.w, 0.5);
+  }
+  // night: glowing plankton in the wave lines and foam
+  let night = frame.mapInfo.z;
+  if (night > 0.01) {
+    let glowPatch = smoothstep(0.45, 0.8, vnoise(in.xz * 0.015 + vec2f(t * 0.01, 0.0)));
+    col += (lines * 0.45 * glowPatch + clamp(foam, 0.0, 1.0) * 0.6) * night * vec3f(0.15, 0.95, 1.0) * 0.8 * in.fade;
+  }
   // eldritch / lava tint of the water near hot spots
   col = mix(col, frame.lava.rgb * 0.6, clamp(frame.lava.w * 0.15 * shallowT, 0.0, 0.6));
   // void: the ocean reflects the cosmos
@@ -500,7 +540,10 @@ ${COMMON}
   col = mix(col, frame.fogColor.rgb, 1.0 - smoothstep(-0.02, 0.12, y));
   let sd = dot(dir, frame.sunDir.xyz);
   col += frame.sunColor.rgb * pow(max(sd, 0.0), 12.0) * 0.25;
-  col += frame.sunColor.rgb * smoothstep(0.9993, 0.9996, sd) * 6.0 * frame.sunDir.w;
+  let night = frame.mapInfo.z;
+  let disc = mix(smoothstep(0.9993, 0.9996, sd), smoothstep(0.9986, 0.9990, sd), night);
+  let crater = mix(1.0, 0.75 + 0.25 * vnoise(dir.xz * 900.0), night);
+  col += frame.sunColor.rgb * disc * mix(6.0, 2.5, night) * crater * max(frame.sunDir.w, 0.6);
 
   // stars and nebula (void zone)
   if (frame.skyTop.w > 0.001) {
@@ -551,9 +594,14 @@ struct VOut {
   let kind = u32(pr.ex.x + 0.5);
   let rot = pr.ex.y;
   let cr = vec2f(c.x * cos(rot) - c.y * sin(rot), c.x * sin(rot) + c.y * cos(rot));
+  let stretch = select(pr.ex.z, 1.0, pr.ex.z <= 0.0);
   var wp: vec3f;
   if (kind == 2u) {
     wp = pr.pos.xyz + vec3f(cr.x, 0.0, cr.y) * pr.pos.w;
+  } else if (kind == 5u || kind == 6u) {
+    let toCam = normalize(frame.camPos.xyz - pr.pos.xyz);
+    let right = normalize(cross(vec3f(0.0, 1.0, 0.0), toCam));
+    wp = pr.pos.xyz + right * c.x * pr.pos.w + vec3f(0.0, 1.0, 0.0) * c.y * pr.pos.w * stretch;
   } else {
     let right = vec3f(frame.view[0][0], frame.view[1][0], frame.view[2][0]);
     let up = vec3f(frame.view[0][1], frame.view[1][1], frame.view[2][1]);
@@ -577,6 +625,10 @@ struct VOut {
     a = s;
   } else if (in.kind == 4u) {
     a = smoothstep(1.0, 0.8, r);
+  } else if (in.kind == 5u) {
+    a = pow(max(1.0 - abs(in.uv.x), 0.0), 1.5) * (0.35 + 0.65 * (in.uv.y * 0.5 + 0.5)) * smoothstep(-1.0, -0.4, in.uv.y) * smoothstep(1.0, 0.8, in.uv.y);
+  } else if (in.kind == 6u) {
+    a = (1.0 - smoothstep(0.2, 1.0, abs(in.uv.x))) * smoothstep(-1.0, 0.0, in.uv.y);
   } else {
     a = smoothstep(1.0, 0.2, r);
   }

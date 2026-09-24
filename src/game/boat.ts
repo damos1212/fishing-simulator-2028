@@ -27,6 +27,12 @@ export class Boat {
   hull = 0;
   radar = false;
   lamp = false;
+  engineTier = 0;
+  /** '' = hull tier color */
+  paint = '';
+  hat = 'HatSouwester';
+  flagInst = Inst.solid(1, 0.01);
+  npc = false;
   anchored = false;
   bumped = 0;
   private wakeT = 0;
@@ -104,12 +110,32 @@ export class Boat {
 
   draw(r: Renderer, a: Assets, time: number) {
     const i = this.insts;
-    const hc = hex(HULL_COLORS[Math.min(this.hull, HULL_COLORS.length - 1)]);
+    const hc = hex(this.paint || HULL_COLORS[Math.min(this.hull, HULL_COLORS.length - 1)]);
     i.boat.b.set([hc[0], hc[1], hc[2], 0]);
-    i.boat.a[3] = this.hull >= 3 ? 0.05 : 0;
+    i.boat.a[3] = this.hull >= 6 ? 0.05 : 0;
     const boat = a.models.boat;
     r.draw(boat.byName.get('Boat')!, this.matrix, i.boat);
     if (this.lamp) r.draw(boat.byName.get('Lamp')!, this.matrix, i.lamp);
+    // pennant flag waving on the mast
+    const fl = this.flagInst;
+    fl.c[3] = 1;
+    fl.phase = time * 9;
+    fl.amp = 0.12 + Math.min(Math.abs(this.speed) / 60, 0.25);
+    r.draw(boat.byName.get('Flag')!, this.matrix, fl);
+    if (this.engineTier >= 1) r.draw(boat.byName.get('Motor')!, this.matrix, i.lamp);
+    if (this.engineTier >= 4) {
+      r.draw(boat.byName.get('Rockets')!, this.matrix, i.lamp);
+      const th = Math.max(0, this.throttle) * Math.min(1, Math.abs(this.speed) / 8);
+      if (th > 0.05) {
+        const fm = boat.byName.get('Flame')!;
+        const fn = boat.nodes.get('Flame')!;
+        const len = th * (0.9 + 0.3 * Math.sin(time * 40));
+        const m = mat4.multiply(this.m.tmp2, this.matrix, mat4.compose(this.m.tmp, fn[12], fn[13], fn[14]));
+        m[8] *= len; m[9] *= len; m[10] *= len;
+        mat4.multiply(m, m, mat4.compose(this.m.tmp, -fn[12], -fn[13], -fn[14]));
+        r.draw(fm, m, flameInst);
+      }
+    }
     if (this.radar) {
       const rn = boat.nodes.get('Radar')!;
       const px = rn[12], py = rn[13], pz = rn[14];
@@ -123,6 +149,15 @@ export class Boat {
     mat4.multiply(fm, this.matrix, mat4.compose(this.m.tmp, spot[12], spot[13], spot[14], this.fisherYaw));
     const fisher = a.models.fisher;
     r.draw(fisher.byName.get('Fisher')!, fm, i.fisher);
+    const hs = fisher.nodes.get('HatSpot')!;
+    const hm = mat4.multiply(this.m.radar, fm, mat4.compose(this.m.tmp, hs[12], hs[13], hs[14], 0, -0.08));
+    const hats = a.models.hats;
+    const hatMesh = hats.byName.get(this.hat) ?? hats.byName.get('HatSouwester')!;
+    r.draw(hatMesh, hm, i.fisher);
+    if (this.hat === 'HatPropeller') {
+      const pm = mat4.multiply(this.m.tmp2, hm, mat4.compose(this.m.tmp, 0, 0.31, 0, time * 12));
+      r.draw(hats.byName.get('HatPropellerBlades')!, pm, i.fisher);
+    }
     const armsNode = fisher.nodes.get('Arms')!;
     const sx = armsNode[12], sy = armsNode[13], sz = armsNode[14];
     const am = this.m.arms;
@@ -157,3 +192,6 @@ export class Boat {
     return mat4.multiply(out, this.matrix, mat4.compose(mat4.create(), dx, 0.85, dz, yaw));
   }
 }
+
+const flameInst = Inst.solid(2);
+flameInst.a.set([1, 0.55, 0.15, 5]);

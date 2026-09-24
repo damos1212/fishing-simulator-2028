@@ -1,7 +1,11 @@
-import type { ZoneId } from './zones';
+import { LEVEL_VALUE, nicePrice, TRACKS } from './upgrades';
+import { ALL_ZONES, type ZoneId } from './zones';
 
-export type Archetype = 'slim' | 'tall' | 'round' | 'eel' | 'shark' | 'ray' | 'jelly' | 'squid' | 'angler' | 'whale' | 'sword' | 'eyeball';
-export type Rarity = 'common' | 'uncommon' | 'rare' | 'epic' | 'legendary';
+export type Archetype =
+  | 'slim' | 'tall' | 'round' | 'eel' | 'shark' | 'ray' | 'jelly' | 'squid' | 'angler' | 'whale' | 'sword' | 'eyeball'
+  | 'crab' | 'lobster' | 'turtle' | 'octopus' | 'seahorse' | 'starfish' | 'serpent' | 'dolphin' | 'boot' | 'bottle' | 'duck';
+export type Rarity = 'common' | 'uncommon' | 'rare' | 'epic' | 'legendary' | 'boss';
+export type WeatherKind = 'clear' | 'cloudy' | 'rain' | 'storm' | 'fog';
 
 export const PATTERN = { none: 0, stripes: 1, spots: 2, lateral: 3, stars: 4, veins: 5, eyes: 6 } as const;
 
@@ -26,204 +30,264 @@ export interface Species {
   hazard?: 'sting' | 'thief';
   school?: number;
   flavor: string;
+  /** Only bites at this time of day. */
+  time?: 'day' | 'night';
+  /** Only shows up in this weather. */
+  weather?: WeatherKind;
+  /** Zone boss: only appears when summoned with Boss Bait. */
+  boss?: boolean;
+  /** Stays on the seafloor. */
+  bottom?: boolean;
+  /** Keeps upright (jellies, seahorses). */
+  upright?: boolean;
+  /** Not a fish at all. */
+  junk?: boolean;
+  /** Can show up in any zone. */
+  anywhere?: boolean;
 }
 
 export const ANIM: Record<Archetype, number> = {
   slim: 1, tall: 1, round: 1, shark: 1, sword: 1, angler: 1, eel: 2, whale: 3, ray: 4, jelly: 5, squid: 6, eyeball: 6,
+  crab: 9, lobster: 9, turtle: 10, octopus: 6, seahorse: 11, starfish: 12, serpent: 2, dolphin: 3, boot: 0, bottle: 0, duck: 0,
 };
 
-const S = (s: Species) => s;
+const SPEED: Record<Archetype, number> = {
+  slim: 4, tall: 2.8, round: 1.8, eel: 2.2, shark: 5, ray: 2.5, jelly: 0.6, squid: 3.2, angler: 2, whale: 2.5, sword: 6, eyeball: 1.5,
+  crab: 1.3, lobster: 1.5, turtle: 1.8, octopus: 2, seahorse: 0.8, starfish: 0.3, serpent: 4.5, dolphin: 6, boot: 0.2, bottle: 0.3, duck: 0.4,
+};
+const RARITY_VALUE: Record<Rarity, number> = { common: 1, uncommon: 1.8, rare: 4, epic: 9, legendary: 35, boss: 150 };
+const RARITY_WEIGHT: Record<Rarity, number> = { common: 8, uncommon: 4, rare: 1.5, epic: 0.7, legendary: 0.12, boss: 0 };
+const RARITY_KG: Record<Rarity, number> = { common: 0.15, uncommon: 0.3, rare: 0.6, epic: 1.0, legendary: 1.7, boss: 7 };
+const LINE_STRENGTH = TRACKS.find((t) => t.id === 'rod')!.tiers.map((t) => t.stats.lineStrength!);
+
+interface Opt {
+  pattern?: number; glow?: number; school?: number; hazard?: 'sting' | 'thief'; v?: number; bait?: number; speed?: number;
+  time?: 'day' | 'night'; weather?: WeatherKind; bottom?: boolean; upright?: boolean; kg?: number; weight?: number;
+  junk?: boolean; anywhere?: boolean;
+}
+
+const UPRIGHT: Archetype[] = ['jelly', 'seahorse'];
+const BOTTOM: Archetype[] = ['crab', 'lobster', 'starfish'];
+
+function S(zone: ZoneId, id: string, name: string, model: Archetype, depth: [number, number], size: number,
+  colors: [string, string, string], rarity: Rarity, flavor: string, o: Opt = {}): Species {
+  const level = ALL_ZONES.find((z) => z.id === zone)!.level;
+  const boss = rarity === 'boss';
+  const bait = o.bait ?? (o.hazard ? 0 : Math.max(0, level - (rarity === 'common' ? 1 : 0)));
+  return {
+    id, name, zone, model, depth, size, colors, rarity, flavor,
+    pattern: o.pattern, glow: o.glow, school: o.school, hazard: o.hazard,
+    value: o.hazard ? 0 : o.junk ? Math.round(o.v ?? 1) : nicePrice(LEVEL_VALUE[level] * RARITY_VALUE[rarity] * (o.v ?? 1)),
+    bait,
+    speed: o.speed ?? SPEED[model],
+    weight: o.weight ?? (o.hazard ? 2.5 : RARITY_WEIGHT[rarity]),
+    kg: o.kg ?? LINE_STRENGTH[Math.min(level, LINE_STRENGTH.length - 1)] * RARITY_KG[rarity] * (size > 2 ? 1.3 : 1),
+    time: o.time, weather: o.weather, boss,
+    bottom: o.bottom ?? BOTTOM.includes(model), upright: o.upright ?? UPRIGHT.includes(model),
+    junk: o.junk, anywhere: o.anywhere,
+  };
+}
+
+const P = PATTERN;
 
 export const SPECIES: Species[] = [
-  // ---------------------------------------------------------------- Open Sea
-  S({ id: 'sardine', name: 'Silver Sardine', zone: 'open', model: 'slim', depth: [0, 40], weight: 10, value: 4, size: 0.35, kg: 0.2,
-    colors: ['#4a7fa8', '#e8f1f5', '#9cc3d9'], pattern: PATTERN.lateral, bait: 0, speed: 3, rarity: 'common', school: 7,
-    flavor: 'Comes in a can. Also, apparently, in the ocean.' }),
-  S({ id: 'mackerel', name: 'Zippy Mackerel', zone: 'open', model: 'slim', depth: [5, 70], weight: 7, value: 12, size: 0.5, kg: 0.8,
-    colors: ['#2d6f8e', '#e6eef0', '#3f8aa8'], pattern: PATTERN.stripes, bait: 0, speed: 4, rarity: 'common', school: 5,
-    flavor: 'Has never once been late to anything.' }),
-  S({ id: 'flyingfish', name: 'Flappy Flyingfish', zone: 'open', model: 'slim', depth: [0, 20], weight: 4, value: 22, size: 0.45, kg: 0.5,
-    colors: ['#3a78c9', '#dfeaf7', '#7fb8f0'], bait: 1, speed: 5, rarity: 'uncommon',
-    flavor: 'Thinks it is a bird. Nobody has the heart to tell it.' }),
-  S({ id: 'barracuda', name: 'Bitey Barracuda', zone: 'open', model: 'sword', depth: [15, 110], weight: 3, value: 55, size: 1.2, kg: 8,
-    colors: ['#6f8a96', '#dfe7ea', '#4f6a76'], pattern: PATTERN.spots, bait: 1, speed: 5, rarity: 'uncommon',
-    flavor: 'All teeth, no manners.' }),
-  S({ id: 'moonjelly', name: 'Moon Jelly', zone: 'open', model: 'jelly', depth: [3, 80], weight: 3, value: 0, size: 0.8, kg: 0.3,
-    colors: ['#cfe6ff', '#a7c8f0', '#e6f0ff'], glow: 0.35, bait: 0, speed: 0.6, rarity: 'common', hazard: 'sting',
-    flavor: 'Stings anything on your hook. Steer clear!' }),
-  S({ id: 'mola', name: 'Mola Mola', zone: 'open', model: 'tall', depth: [20, 140], weight: 0.6, value: 380, size: 1.9, kg: 60,
-    colors: ['#8d9aa3', '#dcdfe0', '#77838c'], bait: 2, speed: 1.5, rarity: 'rare',
-    flavor: 'A giant swimming head. Very chill. Very heavy.' }),
+  // ---------------------------------------------------------------- Open Sea (L0)
+  S('open', 'sardine', 'Silver Sardine', 'slim', [0, 40], 0.35, ['#4a7fa8', '#e8f1f5', '#9cc3d9'], 'common', 'Comes in a can. Also, apparently, in the ocean.', { pattern: P.lateral, school: 7, v: 0.5 }),
+  S('open', 'mackerel', 'Zippy Mackerel', 'slim', [5, 70], 0.5, ['#2d6f8e', '#e6eef0', '#3f8aa8'], 'common', 'Has never once been late to anything.', { pattern: P.stripes, school: 5 }),
+  S('open', 'flyingfish', 'Flappy Flyingfish', 'slim', [0, 20], 0.45, ['#3a78c9', '#dfeaf7', '#7fb8f0'], 'uncommon', 'Thinks it is a bird. Nobody has the heart to tell it.', { bait: 1 }),
+  S('open', 'barracuda', 'Bitey Barracuda', 'sword', [15, 110], 1.2, ['#6f8a96', '#dfe7ea', '#4f6a76'], 'uncommon', 'All teeth, no manners.', { pattern: P.spots, bait: 1, v: 2 }),
+  S('open', 'moonjelly', 'Moon Jelly', 'jelly', [3, 80], 0.8, ['#cfe6ff', '#a7c8f0', '#e6f0ff'], 'common', 'Stings anything on your hook. Steer clear!', { glow: 0.35, hazard: 'sting' }),
+  S('open', 'mola', 'Mola Mola', 'tall', [20, 140], 1.9, ['#8d9aa3', '#dcdfe0', '#77838c'], 'rare', 'A giant swimming head. Very chill. Very heavy.', { bait: 2, v: 3 }),
+  S('open', 'bluecrab', 'Blue Crab', 'crab', [5, 140], 0.4, ['#3a6ad0', '#f0e0c0', '#d04030'], 'uncommon', 'Walks sideways out of every conversation.'),
+  S('open', 'nightsquid', 'Night Squid', 'squid', [10, 120], 0.9, ['#5a2a6a', '#d0a0d0', '#ff70c0'], 'uncommon', 'Only comes out after bedtime.', { time: 'night', glow: 0.5, v: 1.5 }),
+  S('open', 'raindrop', 'Raindrop Minnow', 'slim', [0, 30], 0.3, ['#7ab0e0', '#e8f4ff', '#a0d0ff'], 'uncommon', 'Falls from the sky during rain. Allegedly.', { weather: 'rain', school: 6, v: 1.5 }),
+  S('open', 'oarfish', 'Oarfish', 'serpent', [60, 140], 3.5, ['#c0c8d0', '#f0f4f8', '#ff4a4a'], 'rare', "The ocean's longest noodle.", { bait: 1, v: 3 }),
 
-  // ---------------------------------------------------------------- Sunny Shallows
-  S({ id: 'clown', name: 'Clown Buddy', zone: 'shallows', model: 'tall', depth: [0, 25], weight: 8, value: 9, size: 0.3, kg: 0.2,
-    colors: ['#ff7a1a', '#ff9a3c', '#ff6a10'], pattern: PATTERN.stripes, bait: 0, speed: 2.5, rarity: 'common',
-    flavor: 'Tells the same three jokes. Still funny.' }),
-  S({ id: 'snapper', name: 'Blushing Snapper', zone: 'shallows', model: 'tall', depth: [4, 38], weight: 6, value: 16, size: 0.6, kg: 2,
-    colors: ['#e0485a', '#ffb3a7', '#d63a4a'], bait: 0, speed: 3, rarity: 'common',
-    flavor: 'Embarrassed to be caught. Blushes permanently.' }),
-  S({ id: 'puffer', name: 'Puffy McPuff', zone: 'shallows', model: 'round', depth: [5, 40], weight: 4, value: 24, size: 0.45, kg: 1.5,
-    colors: ['#e8c35a', '#fff4d6', '#c99a3a'], pattern: PATTERN.spots, bait: 0, speed: 1.8, rarity: 'uncommon',
-    flavor: 'Holds its breath when nervous. Always nervous.' }),
-  S({ id: 'tang', name: 'Blue Tang', zone: 'shallows', model: 'tall', depth: [2, 30], weight: 5, value: 14, size: 0.35, kg: 0.4,
-    colors: ['#2a5fd8', '#3a7fe8', '#ffd21a'], bait: 0, speed: 3, rarity: 'common',
-    flavor: 'Forgot why it swam over here.' }),
-  S({ id: 'stinger', name: 'Pink Stinger', zone: 'shallows', model: 'jelly', depth: [5, 40], weight: 2.5, value: 0, size: 0.7, kg: 0.3,
-    colors: ['#ff8fc8', '#ff6ab0', '#ffc0e0'], glow: 0.4, bait: 0, speed: 0.5, rarity: 'common', hazard: 'sting',
-    flavor: 'Cute. Evil. Steals your fish with a zap.' }),
-  S({ id: 'grouper', name: 'Grumpy Grouper', zone: 'shallows', model: 'tall', depth: [18, 45], weight: 1.2, value: 85, size: 1.3, kg: 18,
-    colors: ['#6b7f4a', '#c9c29a', '#55663a'], pattern: PATTERN.spots, bait: 1, speed: 2, rarity: 'rare',
-    flavor: 'Has been grumpy since 1987. Nobody knows why.' }),
-  S({ id: 'guppyking', name: 'Golden Guppy King', zone: 'shallows', model: 'slim', depth: [22, 45], weight: 0.15, value: 450, size: 0.8, kg: 3,
-    colors: ['#ffcf3a', '#fff0a0', '#ffa81a'], glow: 0.6, bait: 1, speed: 4, rarity: 'legendary',
-    flavor: 'Rules the shallows with a tiny golden fin.' }),
+  // ---------------------------------------------------------------- Sunny Shallows (L0)
+  S('shallows', 'clown', 'Clown Buddy', 'tall', [0, 25], 0.3, ['#ff7a1a', '#ff9a3c', '#ff6a10'], 'common', 'Tells the same three jokes. Still funny.', { pattern: P.stripes }),
+  S('shallows', 'snapper', 'Blushing Snapper', 'tall', [4, 38], 0.6, ['#e0485a', '#ffb3a7', '#d63a4a'], 'common', 'Embarrassed to be caught. Blushes permanently.', { v: 1.4 }),
+  S('shallows', 'puffer', 'Puffy McPuff', 'round', [5, 40], 0.45, ['#e8c35a', '#fff4d6', '#c99a3a'], 'uncommon', 'Holds its breath when nervous. Always nervous.', { pattern: P.spots }),
+  S('shallows', 'tang', 'Blue Tang', 'tall', [2, 30], 0.35, ['#2a5fd8', '#3a7fe8', '#ffd21a'], 'common', 'Forgot why it swam over here.'),
+  S('shallows', 'stinger', 'Pink Stinger', 'jelly', [5, 40], 0.7, ['#ff8fc8', '#ff6ab0', '#ffc0e0'], 'common', 'Cute. Evil. Steals your fish with a zap.', { glow: 0.4, hazard: 'sting' }),
+  S('shallows', 'grouper', 'Grumpy Grouper', 'tall', [18, 45], 1.3, ['#6b7f4a', '#c9c29a', '#55663a'], 'rare', 'Has been grumpy since 1987. Nobody knows why.', { pattern: P.spots, bait: 1 }),
+  S('shallows', 'guppyking', 'Golden Guppy King', 'slim', [22, 45], 0.8, ['#ffcf3a', '#fff0a0', '#ffa81a'], 'legendary', 'Rules the shallows with a tiny golden fin.', { glow: 0.6, bait: 1 }),
+  S('shallows', 'hermit', 'Hermit Crab', 'crab', [2, 40], 0.3, ['#e08a5a', '#f8e0c0', '#c05030'], 'common', 'Lives in a borrowed shell. Rent-free.'),
+  S('shallows', 'starfish', 'Sunny Starfish', 'starfish', [1, 40], 0.4, ['#ff9a3a', '#ffd0a0', '#ff6a2a'], 'common', 'Has five arms and zero plans.', { pattern: P.spots, v: 0.8 }),
+  S('shallows', 'seahorse', 'Tiny Seahorse', 'seahorse', [2, 30], 0.35, ['#ffb03a', '#fff0b0', '#ff8a2a'], 'uncommon', 'Dad carries the babies. Legend.', { v: 1.3 }),
+  S('shallows', 'glowgoby', 'Glow Goby', 'slim', [2, 35], 0.3, ['#3affd0', '#d0fff0', '#80fff0'], 'uncommon', 'The night light of the shallows.', { time: 'night', glow: 1.2, school: 4 }),
+  S('shallows', 'kinggrouper', 'King Grouper', 'tall', [15, 40], 4.5, ['#5a6f3a', '#c9c29a', '#ffd23a'], 'boss', 'Wears a crown of barnacles. Extremely grumpy.', { pattern: P.spots, glow: 0.2 }),
 
-  // ---------------------------------------------------------------- Kelp Coast
-  S({ id: 'garibaldi', name: 'Garibaldi', zone: 'kelp', model: 'tall', depth: [0, 50], weight: 7, value: 28, size: 0.35, kg: 0.6,
-    colors: ['#ff6a13', '#ff8a33', '#ff5a00'], bait: 1, speed: 2.5, rarity: 'common',
-    flavor: 'The bright orange mayor of Kelp Town.' }),
-  S({ id: 'kelpbass', name: 'Kelp Bass', zone: 'kelp', model: 'slim', depth: [5, 70], weight: 7, value: 36, size: 0.6, kg: 2,
-    colors: ['#5e6b3a', '#d8d0a0', '#4a5528'], pattern: PATTERN.spots, bait: 1, speed: 3, rarity: 'common', school: 4,
-    flavor: 'Camouflaged as a salad.' }),
-  S({ id: 'wolfeel', name: 'Wolf Eel', zone: 'kelp', model: 'eel', depth: [30, 95], weight: 3, value: 95, size: 1.8, kg: 6,
-    colors: ['#7a6a5a', '#b8a890', '#6a5a4a'], pattern: PATTERN.spots, bait: 1, speed: 2, rarity: 'uncommon',
-    flavor: 'Face only a mother could love. She does, a lot.' }),
-  S({ id: 'seadragon', name: 'Leafy Seadragon', zone: 'kelp', model: 'eel', depth: [10, 60], weight: 1, value: 260, size: 0.5, kg: 0.3,
-    colors: ['#d9b23a', '#f2d78a', '#a8c94a'], bait: 2, speed: 1.2, rarity: 'rare',
-    flavor: 'A dragon made of salad. Majestic.' }),
-  S({ id: 'kelpjelly', name: 'Tangle Jelly', zone: 'kelp', model: 'jelly', depth: [10, 90], weight: 2.5, value: 0, size: 0.9, kg: 0.4,
-    colors: ['#b8e070', '#8ac040', '#d8f0a0'], glow: 0.4, bait: 0, speed: 0.5, rarity: 'common', hazard: 'sting',
-    flavor: 'Tangles lines, steals fish, feels nothing.' }),
-  S({ id: 'seabass', name: 'Giant Sea Bass', zone: 'kelp', model: 'tall', depth: [45, 95], weight: 0.8, value: 520, size: 2.1, kg: 90,
-    colors: ['#3a3f48', '#8a8f98', '#2a2f38'], pattern: PATTERN.spots, bait: 2, speed: 1.6, rarity: 'epic',
-    flavor: 'The size of a sofa. The attitude of a sofa.' }),
-  S({ id: 'emeraldmoray', name: 'Emerald Moray', zone: 'kelp', model: 'eel', depth: [60, 95], weight: 0.15, value: 1600, size: 2.2, kg: 20,
-    colors: ['#1fa860', '#7ff0a8', '#0f8040'], glow: 0.8, pattern: PATTERN.spots, bait: 2, speed: 2.5, rarity: 'legendary',
-    flavor: 'Glows like a gemstone. Bites like a gem thief.' }),
+  // ---------------------------------------------------------------- Kelp Coast (L1)
+  S('kelp', 'garibaldi', 'Garibaldi', 'tall', [0, 50], 0.35, ['#ff6a13', '#ff8a33', '#ff5a00'], 'common', 'The bright orange mayor of Kelp Town.'),
+  S('kelp', 'kelpbass', 'Kelp Bass', 'slim', [5, 70], 0.6, ['#5e6b3a', '#d8d0a0', '#4a5528'], 'common', 'Camouflaged as a salad.', { pattern: P.spots, school: 4 }),
+  S('kelp', 'wolfeel', 'Wolf Eel', 'eel', [30, 95], 1.8, ['#7a6a5a', '#b8a890', '#6a5a4a'], 'uncommon', 'Face only a mother could love. She does, a lot.', { pattern: P.spots }),
+  S('kelp', 'seadragon', 'Leafy Seadragon', 'seahorse', [10, 60], 0.5, ['#d9b23a', '#f2d78a', '#a8c94a'], 'rare', 'A dragon made of salad. Majestic.'),
+  S('kelp', 'kelpjelly', 'Tangle Jelly', 'jelly', [10, 90], 0.9, ['#b8e070', '#8ac040', '#d8f0a0'], 'common', 'Tangles lines, steals fish, feels nothing.', { glow: 0.4, hazard: 'sting' }),
+  S('kelp', 'seabass', 'Giant Sea Bass', 'tall', [45, 95], 2.1, ['#3a3f48', '#8a8f98', '#2a2f38'], 'epic', 'The size of a sofa. The attitude of a sofa.', { pattern: P.spots }),
+  S('kelp', 'emeraldmoray', 'Emerald Moray', 'eel', [60, 95], 2.2, ['#1fa860', '#7ff0a8', '#0f8040'], 'legendary', 'Glows like a gemstone. Bites like a gem thief.', { glow: 0.8, pattern: P.spots }),
+  S('kelp', 'rockfish', 'Vermilion Rockfish', 'tall', [10, 80], 0.5, ['#e04a2a', '#ffb090', '#c03a1a'], 'common', 'Hides in rocks. Is not a rock.', { pattern: P.spots }),
+  S('kelp', 'kelpcrab', 'Kelp Crab', 'crab', [5, 95], 0.4, ['#7a8a3a', '#e0d8a0', '#5a6a2a'], 'common', 'Wears seaweed as a hat. Fashion!'),
+  S('kelp', 'sheephead', 'California Sheephead', 'tall', [15, 80], 0.8, ['#2a2a30', '#ff6a5a', '#f0f0f0'], 'uncommon', 'Has buck teeth and no regrets.'),
+  S('kelp', 'kelpkraken', 'Kelp Kraken', 'octopus', [40, 95], 6, ['#5a7a2a', '#b0c070', '#ffd060'], 'boss', 'Eight arms. Eight salads. One appetite.', { pattern: P.spots }),
 
-  // ---------------------------------------------------------------- Deep Blue
-  S({ id: 'tuna', name: 'Yellowfin Tuna', zone: 'deepblue', model: 'slim', depth: [15, 160], weight: 7, value: 140, size: 1.5, kg: 25,
-    colors: ['#1f3e7a', '#e8e8f0', '#ffd23a'], bait: 2, speed: 5, rarity: 'common', school: 4,
-    flavor: 'Built like a torpedo. Tastes like... no, we release those. Mostly.' }),
-  S({ id: 'mahi', name: 'Mahi-Mahi', zone: 'deepblue', model: 'tall', depth: [0, 90], weight: 6, value: 120, size: 1.1, kg: 12,
-    colors: ['#2fb36b', '#f5e04a', '#3aa0e0'], pattern: PATTERN.spots, bait: 2, speed: 4.5, rarity: 'common',
-    flavor: 'So nice they named it twice.' }),
-  S({ id: 'lantern', name: 'Lanternfish', zone: 'deepblue', model: 'slim', depth: [150, 340], weight: 7, value: 70, size: 0.3, kg: 0.1,
-    colors: ['#1a2a4a', '#3a5a8a', '#6ad0ff'], glow: 1.2, pattern: PATTERN.lateral, bait: 2, speed: 3, rarity: 'common', school: 8,
-    flavor: 'Brings its own night light.' }),
-  S({ id: 'manta', name: 'Manta Ray', zone: 'deepblue', model: 'ray', depth: [40, 250], weight: 2, value: 420, size: 3.2, kg: 70,
-    colors: ['#20283a', '#f0f0f0', '#101828'], bait: 2, speed: 2.5, rarity: 'uncommon',
-    flavor: 'Flies through water like a majestic bath towel.' }),
-  S({ id: 'hammer', name: 'Hammerhead', zone: 'deepblue', model: 'shark', depth: [30, 300], weight: 1.5, value: 0, size: 3, kg: 150,
-    colors: ['#6f7f8f', '#e8eef0', '#5f6f7f'], bait: 0, speed: 5, rarity: 'uncommon', hazard: 'thief',
-    flavor: 'Steals fish right off your hook. Rude.' }),
-  S({ id: 'swordfish', name: 'Swordfish', zone: 'deepblue', model: 'sword', depth: [80, 320], weight: 1.4, value: 680, size: 2.6, kg: 65,
-    colors: ['#3a4a6a', '#d0d8e0', '#2a3a5a'], bait: 3, speed: 6, rarity: 'rare',
-    flavor: 'En garde!' }),
-  S({ id: 'marlin', name: 'Blue Marlin', zone: 'deepblue', model: 'sword', depth: [150, 340], weight: 0.12, value: 4200, size: 3.4, kg: 150,
-    colors: ['#1a5ad8', '#e0ecff', '#3a8aff'], glow: 0.5, pattern: PATTERN.stripes, bait: 3, speed: 7, rarity: 'legendary',
-    flavor: 'The old man and the sea wishes he had this one.' }),
+  // ---------------------------------------------------------------- Coral Kingdom (L1)
+  S('coral', 'parrot', 'Parrotfish', 'tall', [0, 40], 0.6, ['#3ad0a0', '#a0f0e0', '#ff70b0'], 'common', "Poops sand. You're welcome, beaches."),
+  S('coral', 'butterfly', 'Butterflyfish', 'tall', [0, 35], 0.3, ['#ffe040', '#fff8d0', '#2a2a30'], 'common', "Flutters. Doesn't fly.", { pattern: P.stripes }),
+  S('coral', 'wrasse', 'Cleaner Wrasse', 'slim', [0, 40], 0.25, ['#3a8aff', '#e0f0ff', '#2a2a40'], 'common', 'Runs a very small car wash for sharks.', { pattern: P.lateral, school: 4 }),
+  S('coral', 'angel', 'Queen Angelfish', 'tall', [5, 50], 0.5, ['#2a7aff', '#ffe040', '#ffb020'], 'uncommon', 'Royal blue. Royal attitude.'),
+  S('coral', 'lionfish', 'Lionfish', 'round', [5, 50], 0.5, ['#c0402a', '#fff0e0', '#8a2a1a'], 'uncommon', 'Majestic mane. Venomous handshake.', { pattern: P.stripes }),
+  S('coral', 'coralcrab', 'Royal Crab', 'crab', [3, 60], 0.45, ['#b040d0', '#ffd0f0', '#ffd23a'], 'uncommon', 'Demands to be called Your Crabness.'),
+  S('coral', 'mantis', 'Mantis Shrimp', 'lobster', [5, 60], 0.35, ['#3ad060', '#ff5a8a', '#3a8aff'], 'rare', 'Punches harder than a bullet. Be nice.'),
+  S('coral', 'reefturtle', 'Green Sea Turtle', 'turtle', [2, 55], 1.2, ['#5a8a3a', '#e0d0a0', '#7aaa5a'], 'rare', 'Older than your grandma. Cooler too.', { pattern: P.spots }),
+  S('coral', 'reefshark', 'Reef Shark', 'shark', [10, 60], 1.8, ['#8a98a0', '#f0f4f4', '#2a2a30'], 'uncommon', 'Patrols the reef. Takes a cut of every catch.', { hazard: 'thief' }),
+  S('coral', 'coraljelly', 'Box Jelly', 'jelly', [2, 50], 0.6, ['#e0f0ff', '#b0d0ff', '#ffffff'], 'common', 'Shaped like a box. Stings like a hornet.', { glow: 0.5, hazard: 'sting' }),
+  S('coral', 'rainbowking', 'Rainbow Emperor', 'tall', [20, 60], 1.1, ['#ff4a8a', '#ffe040', '#3ad0ff'], 'legendary', 'Every color. All at once.', { glow: 0.7, pattern: P.stripes }),
+  S('coral', 'coralcolossus', 'Coral Colossus', 'turtle', [20, 60], 7, ['#ff8ab0', '#ffe0c0', '#ff5a8a'], 'boss', 'A turtle so old it grew a reef on its back.', { pattern: P.spots }),
 
-  // ---------------------------------------------------------------- Frostbite Fjord
-  S({ id: 'cod', name: 'Arctic Cod', zone: 'frost', model: 'slim', depth: [5, 150], weight: 8, value: 190, size: 0.7, kg: 3,
-    colors: ['#8a9a7a', '#f0f0e8', '#7a8a6a'], pattern: PATTERN.spots, bait: 3, speed: 3, rarity: 'common', school: 5,
-    flavor: 'Wears a tiny invisible scarf.' }),
-  S({ id: 'icefish', name: 'Glassy Icefish', zone: 'frost', model: 'slim', depth: [20, 200], weight: 5, value: 340, size: 0.6, kg: 1,
-    colors: ['#dff4ff', '#ffffff', '#b8e4ff'], glow: 0.5, bait: 3, speed: 3, rarity: 'uncommon',
-    flavor: 'Has antifreeze for blood. Literally.' }),
-  S({ id: 'snowsquid', name: 'Snow Squid', zone: 'frost', model: 'squid', depth: [60, 240], weight: 3, value: 520, size: 1.2, kg: 8,
-    colors: ['#e8f4ff', '#ffffff', '#b8d8f0'], glow: 0.3, bait: 3, speed: 3.5, rarity: 'uncommon',
-    flavor: 'Inks in white. Very confusing for everyone.' }),
-  S({ id: 'halibut', name: 'Glacier Halibut', zone: 'frost', model: 'ray', depth: [120, 240], weight: 2, value: 820, size: 1.8, kg: 40,
-    colors: ['#9aa0a8', '#f4f4f4', '#7a8088'], pattern: PATTERN.spots, bait: 3, speed: 2, rarity: 'rare',
-    flavor: 'Flat as a pancake, cold as a freezer.' }),
-  S({ id: 'frostjelly', name: 'Frost Jelly', zone: 'frost', model: 'jelly', depth: [10, 200], weight: 2.5, value: 0, size: 1, kg: 0.5,
-    colors: ['#aee8ff', '#7fd0ff', '#dff6ff'], glow: 0.8, bait: 0, speed: 0.5, rarity: 'common', hazard: 'sting',
-    flavor: 'Freezes your catch clean off the hook.' }),
-  S({ id: 'narwhal', name: 'Narwhal Fish', zone: 'frost', model: 'sword', depth: [80, 240], weight: 1, value: 1500, size: 2.4, kg: 60,
-    colors: ['#a8b8c8', '#e8eef4', '#8898a8'], pattern: PATTERN.spots, bait: 4, speed: 4, rarity: 'epic',
-    flavor: 'The unicorn of the sea. Might grant wishes. Probably not.' }),
-  S({ id: 'yetiwhale', name: 'Yeti Whale', zone: 'frost', model: 'whale', depth: [180, 240], weight: 0.12, value: 13000, size: 6, kg: 900,
-    colors: ['#f0f4f8', '#ffffff', '#d0dce8'], glow: 0.3, bait: 4, speed: 2.5, rarity: 'legendary',
-    flavor: 'Fluffy. Enormous. Sings sea shanties.' }),
+  // ---------------------------------------------------------------- Deep Blue (L2)
+  S('deepblue', 'tuna', 'Yellowfin Tuna', 'slim', [15, 160], 1.5, ['#1f3e7a', '#e8e8f0', '#ffd23a'], 'common', 'Built like a torpedo. Tastes like... no, we release those. Mostly.', { school: 4, v: 1.3 }),
+  S('deepblue', 'mahi', 'Mahi-Mahi', 'tall', [0, 90], 1.1, ['#2fb36b', '#f5e04a', '#3aa0e0'], 'common', 'So nice they named it twice.', { pattern: P.spots }),
+  S('deepblue', 'lantern', 'Lanternfish', 'slim', [150, 340], 0.3, ['#1a2a4a', '#3a5a8a', '#6ad0ff'], 'common', 'Brings its own night light.', { glow: 1.2, pattern: P.lateral, school: 8, v: 0.7 }),
+  S('deepblue', 'manta', 'Manta Ray', 'ray', [40, 250], 3.2, ['#20283a', '#f0f0f0', '#101828'], 'uncommon', 'Flies through water like a majestic bath towel.', { v: 1.5 }),
+  S('deepblue', 'hammer', 'Hammerhead', 'shark', [30, 300], 3, ['#6f7f8f', '#e8eef0', '#5f6f7f'], 'uncommon', 'Steals fish right off your hook. Rude.', { hazard: 'thief' }),
+  S('deepblue', 'swordfish', 'Swordfish', 'sword', [80, 320], 2.6, ['#3a4a6a', '#d0d8e0', '#2a3a5a'], 'rare', 'En garde!'),
+  S('deepblue', 'marlin', 'Blue Marlin', 'sword', [150, 340], 3.4, ['#1a5ad8', '#e0ecff', '#3a8aff'], 'legendary', 'The old man and the sea wishes he had this one.', { glow: 0.5, pattern: P.stripes }),
+  S('deepblue', 'wahoo', 'Wahoo', 'slim', [10, 120], 1.4, ['#2a4a8a', '#e0e8f0', '#4a7ad0'], 'uncommon', 'Named after what you yell when you catch it.', { pattern: P.stripes }),
+  S('deepblue', 'devilray', 'Devil Ray', 'ray', [60, 300], 2, ['#2a2030', '#e0d0e0', '#4a3050'], 'uncommon', 'Not actually evil. Just misunderstood.'),
+  S('deepblue', 'humboldt', 'Humboldt Squid', 'squid', [50, 300], 1.4, ['#c0302a', '#ffb0a0', '#ff5a3a'], 'rare', 'Red, angry, and hunts in packs.', { time: 'night', glow: 0.4 }),
+  S('deepblue', 'megalodon', 'Megalodon', 'shark', [100, 340], 14, ['#4a5a6a', '#d0d8e0', '#2a3a4a'], 'boss', 'Supposedly extinct. Supposedly.'),
 
-  // ---------------------------------------------------------------- Magma Rift
-  S({ id: 'ember', name: 'Ember Minnow', zone: 'magma', model: 'slim', depth: [5, 200], weight: 8, value: 420, size: 0.35, kg: 0.3,
-    colors: ['#ff5a1a', '#ffb04a', '#ff3a00'], glow: 1.2, bait: 4, speed: 4, rarity: 'common', school: 8,
-    flavor: 'Toasty. Handle with oven mitts.' }),
-  S({ id: 'magmapuffer', name: 'Magma Puffer', zone: 'magma', model: 'round', depth: [30, 300], weight: 4, value: 1200, size: 0.8, kg: 5,
-    colors: ['#3a2a2a', '#5a3a2a', '#ff7a1a'], pattern: PATTERN.veins, bait: 4, speed: 1.8, rarity: 'uncommon',
-    flavor: 'Puffs up into a tiny volcano. Pop!' }),
-  S({ id: 'obsidian', name: 'Obsidian Bass', zone: 'magma', model: 'tall', depth: [60, 380], weight: 4, value: 1800, size: 1, kg: 15,
-    colors: ['#1a1a24', '#3a3a48', '#ff4a1a'], pattern: PATTERN.veins, bait: 4, speed: 3, rarity: 'uncommon',
-    flavor: 'Sharp enough to cut glass. Is glass.' }),
-  S({ id: 'lavaeel', name: 'Lava Eel', zone: 'magma', model: 'eel', depth: [150, 430], weight: 2.5, value: 2600, size: 2.4, kg: 25,
-    colors: ['#2a1a1a', '#4a2a1a', '#ff6a00'], pattern: PATTERN.veins, glow: 0.2, bait: 4, speed: 3, rarity: 'rare',
-    flavor: 'A river of lava that learned to wiggle.' }),
-  S({ id: 'salamander', name: 'Salamander Shark', zone: 'magma', model: 'shark', depth: [40, 400], weight: 1.4, value: 0, size: 3.4, kg: 200,
-    colors: ['#6a2a1a', '#ffb04a', '#ff5a1a'], pattern: PATTERN.veins, bait: 0, speed: 5.5, rarity: 'uncommon', hazard: 'thief',
-    flavor: 'Chomps fish off your hook, then chomps the hook.' }),
-  S({ id: 'firejelly', name: 'Fire Jelly', zone: 'magma', model: 'jelly', depth: [10, 400], weight: 2.5, value: 0, size: 1.1, kg: 0.5,
-    colors: ['#ff8a2a', '#ff5a10', '#ffd07a'], glow: 1.4, bait: 0, speed: 0.6, rarity: 'common', hazard: 'sting',
-    flavor: 'A floating campfire that hates you.' }),
-  S({ id: 'phoenixkoi', name: 'Phoenix Koi', zone: 'magma', model: 'slim', depth: [300, 430], weight: 0.1, value: 32000, size: 1.6, kg: 30,
-    colors: ['#ff3a1a', '#ffd23a', '#ff8a1a'], glow: 1.6, pattern: PATTERN.veins, bait: 5, speed: 5, rarity: 'legendary',
-    flavor: 'Reborn from its own ashes every Tuesday.' }),
+  // ---------------------------------------------------------------- Frostbite Fjord (L3)
+  S('frost', 'cod', 'Arctic Cod', 'slim', [5, 150], 0.7, ['#8a9a7a', '#f0f0e8', '#7a8a6a'], 'common', 'Wears a tiny invisible scarf.', { pattern: P.spots, school: 5 }),
+  S('frost', 'icefish', 'Glassy Icefish', 'slim', [20, 200], 0.6, ['#dff4ff', '#ffffff', '#b8e4ff'], 'uncommon', 'Has antifreeze for blood. Literally.', { glow: 0.5 }),
+  S('frost', 'snowsquid', 'Snow Squid', 'squid', [60, 240], 1.2, ['#e8f4ff', '#ffffff', '#b8d8f0'], 'uncommon', 'Inks in white. Very confusing for everyone.', { glow: 0.3 }),
+  S('frost', 'halibut', 'Glacier Halibut', 'ray', [120, 240], 1.8, ['#9aa0a8', '#f4f4f4', '#7a8088'], 'rare', 'Flat as a pancake, cold as a freezer.', { pattern: P.spots }),
+  S('frost', 'frostjelly', 'Frost Jelly', 'jelly', [10, 200], 1, ['#aee8ff', '#7fd0ff', '#dff6ff'], 'common', 'Freezes your catch clean off the hook.', { glow: 0.8, hazard: 'sting' }),
+  S('frost', 'narwhal', 'Narwhal Fish', 'sword', [80, 240], 2.4, ['#a8b8c8', '#e8eef4', '#8898a8'], 'epic', 'The unicorn of the sea. Might grant wishes. Probably not.', { pattern: P.spots }),
+  S('frost', 'yetiwhale', 'Yeti Whale', 'whale', [180, 240], 6, ['#f0f4f8', '#ffffff', '#d0dce8'], 'legendary', 'Fluffy. Enormous. Sings sea shanties.', { glow: 0.3 }),
+  S('frost', 'snowcrab', 'Snow Crab', 'crab', [20, 240], 0.5, ['#e07a5a', '#fff0e0', '#c05a3a'], 'common', 'Legs for days. Days of legs.'),
+  S('frost', 'iceeel', 'Frozen Eel', 'eel', [40, 240], 1.5, ['#9ad0f0', '#e0f4ff', '#5aa0d0'], 'uncommon', 'Stiff as an icicle. Twice as wiggly.', { glow: 0.3 }),
+  S('frost', 'auroraray', 'Aurora Ray', 'ray', [30, 200], 2.2, ['#3affc0', '#c070ff', '#70f0ff'], 'rare', 'Only glows when the sky does.', { time: 'night', glow: 1.2 }),
+  S('frost', 'frostserpent', 'Frost Leviathan', 'serpent', [120, 240], 16, ['#9ad8ff', '#ffffff', '#3a8ad0'], 'boss', 'The frozen heart of the fjord. It wants its fjord back.', { glow: 0.5 }),
 
-  // ---------------------------------------------------------------- Drowned Temple
-  S({ id: 'whisper', name: 'Whispering Anchovy', zone: 'temple', model: 'slim', depth: [5, 300], weight: 8, value: 1500, size: 0.3, kg: 0.2,
-    colors: ['#4a5a4a', '#8aa08a', '#90ff80'], glow: 0.6, pattern: PATTERN.lateral, bait: 5, speed: 3.5, rarity: 'common', school: 8,
-    flavor: 'Whispers your name. You never told it your name.' }),
-  S({ id: 'manyeyed', name: 'Many-Eyed Grouper', zone: 'temple', model: 'round', depth: [60, 450], weight: 4, value: 5200, size: 1.3, kg: 30,
-    colors: ['#3a4a3a', '#5a6a50', '#c0ff80'], pattern: PATTERN.eyes, bait: 5, speed: 1.8, rarity: 'uncommon',
-    flavor: 'It sees you. It sees you from several angles.' }),
-  S({ id: 'lurker', name: 'Lurking Angler', zone: 'temple', model: 'angler', depth: [150, 650], weight: 3, value: 8200, size: 1.4, kg: 35,
-    colors: ['#1a2a24', '#2a3a30', '#7aff9a'], glow: 0.2, bait: 5, speed: 2, rarity: 'rare',
-    flavor: 'Its little light says "trust me".' }),
-  S({ id: 'eye', name: 'Floating Eye', zone: 'temple', model: 'eyeball', depth: [100, 600], weight: 2, value: 12000, size: 1.2, kg: 20,
-    colors: ['#f0e8d8', '#7aff5a', '#8a5a6a'], glow: 0.3, bait: 5, speed: 1.5, rarity: 'rare',
-    flavor: 'Blinks when you are not looking.' }),
-  S({ id: 'deepsquid', name: 'Deep One Squid', zone: 'temple', model: 'squid', depth: [200, 650], weight: 2, value: 9500, size: 2.4, kg: 50,
-    colors: ['#2a4a3a', '#4a7a5a', '#90ffb0'], glow: 0.5, bait: 5, speed: 3, rarity: 'rare',
-    flavor: 'Knows a guy. The guy is very large and sleeps under a temple.' }),
-  S({ id: 'horror', name: 'Tentacle Horror', zone: 'temple', model: 'squid', depth: [60, 650], weight: 1.8, value: 0, size: 4, kg: 300,
-    colors: ['#3a1a3a', '#6a3a6a', '#c070ff'], glow: 0.4, bait: 0, speed: 4.5, rarity: 'uncommon', hazard: 'thief',
-    flavor: 'Grabs fish off your line with all eight hands.' }),
-  S({ id: 'spawn', name: 'Spawn of Cthulhu', zone: 'temple', model: 'squid', depth: [450, 650], weight: 0.08, value: 125000, size: 5, kg: 700,
-    colors: ['#2a6a4a', '#5aa07a', '#60ff90'], glow: 1.2, pattern: PATTERN.eyes, bait: 6, speed: 3, rarity: 'legendary',
-    flavor: 'Ph\'nglui mglw\'nafh... it\'s just a baby. A very big baby.' }),
+  // ---------------------------------------------------------------- Candy Lagoon (L4)
+  S('candy', 'gummy', 'Gummy Minnow', 'slim', [0, 120], 0.35, ['#ff5aa0', '#a0ff70', '#ffd040'], 'common', "Chewy. Please don't chew.", { school: 6 }),
+  S('candy', 'jellybean', 'Jellybean Puffer', 'round', [5, 150], 0.5, ['#ff8a3a', '#ffe0f0', '#7a3aff'], 'common', 'Every flavor. Even earwax.', { pattern: P.spots }),
+  S('candy', 'sprinkle', 'Sprinkle Starfish', 'starfish', [5, 200], 0.45, ['#ffd0e8', '#fff0f8', '#3ad0ff'], 'common', 'Sprinkles on top. And bottom.', { pattern: P.spots }),
+  S('candy', 'lollipopray', 'Lollipop Ray', 'ray', [20, 200], 1.6, ['#ff4a8a', '#fff0f0', '#ffd040'], 'uncommon', 'Licking is not recommended.', { pattern: P.stripes }),
+  S('candy', 'candycane', 'Candy Cane Eel', 'eel', [20, 180], 1.4, ['#ff3a3a', '#ffffff', '#3ad060'], 'uncommon', 'Minty fresh.', { pattern: P.stripes }),
+  S('candy', 'gumball', 'Gumball Crab', 'crab', [10, 200], 0.5, ['#3ad0ff', '#fff0f8', '#ff5aa0'], 'uncommon', 'Twenty-five cents a pinch.', { pattern: P.spots }),
+  S('candy', 'cotton', 'Cotton Candy Jelly', 'jelly', [5, 180], 1, ['#ffb0e0', '#b0e0ff', '#ffffff'], 'common', 'Melts. Then stings. In that order.', { glow: 0.5, hazard: 'sting' }),
+  S('candy', 'licorice', 'Licorice Shark', 'shark', [20, 200], 2.5, ['#1a1a1a', '#3a1a1a', '#ff2a2a'], 'uncommon', 'Nobody likes the black ones. It knows.', { hazard: 'thief' }),
+  S('candy', 'choco', 'Chocolate Bass', 'tall', [40, 200], 1, ['#6a3a1a', '#c08a5a', '#3a1a0a'], 'rare', 'Solid chocolate. Hollow inside? Only one way to find out.'),
+  S('candy', 'marshmallow', 'Marshmallow Mola', 'tall', [60, 200], 1.8, ['#fff8f0', '#ffffff', '#ffe0e8'], 'rare', "Squishy. Toasty if you've got a fire."),
+  S('candy', 'sugarplum', 'Sugar Plum Fairyfish', 'slim', [100, 200], 0.9, ['#c060ff', '#ffe0ff', '#ffd040'], 'legendary', 'Dances to a very specific ballet.', { glow: 1.0, pattern: P.stars }),
+  S('candy', 'gummyleviathan', 'Gummy Leviathan', 'serpent', [80, 200], 15, ['#ff5aa0', '#a0ff70', '#ffd040'], 'boss', 'A gummy worm that never stopped growing.', { pattern: P.stripes, glow: 0.3 }),
 
-  // ---------------------------------------------------------------- The Void
-  S({ id: 'stardust', name: 'Stardust Minnow', zone: 'void', model: 'slim', depth: [0, 800], weight: 8, value: 5200, size: 0.35, kg: 0.1,
-    colors: ['#5a3ad0', '#b8a0ff', '#ffffff'], pattern: PATTERN.stars, glow: 0.9, bait: 6, speed: 4, rarity: 'common', school: 9,
-    flavor: 'Made of the same stuff as you. Mostly sparkles.' }),
-  S({ id: 'comet', name: 'Comet Tetra', zone: 'void', model: 'slim', depth: [50, 1200], weight: 5, value: 9000, size: 0.5, kg: 0.3,
-    colors: ['#6ad0ff', '#ffffff', '#ffe07a'], glow: 1.8, bait: 6, speed: 7, rarity: 'uncommon',
-    flavor: 'Leaves a tail. Makes wishes come true (unverified).' }),
-  S({ id: 'nebjelly', name: 'Nebula Jelly', zone: 'void', model: 'jelly', depth: [100, 1500], weight: 3, value: 16000, size: 1.6, kg: 2,
-    colors: ['#c060ff', '#40c0ff', '#ff70d0'], glow: 1.5, pattern: PATTERN.stars, bait: 6, speed: 0.8, rarity: 'rare',
-    flavor: 'A whole galaxy, wobbling. Friendly, for once.' }),
-  S({ id: 'moonray', name: 'Moon Ray', zone: 'void', model: 'ray', depth: [200, 1500], weight: 2, value: 31000, size: 3.5, kg: 80,
-    colors: ['#d8d8f0', '#ffffff', '#a0a0d0'], glow: 0.6, pattern: PATTERN.spots, bait: 6, speed: 3, rarity: 'rare',
-    flavor: 'Has craters. Controls a very small tide.' }),
-  S({ id: 'holepuffer', name: 'Black Hole Puffer', zone: 'void', model: 'round', depth: [400, 2000], weight: 1.2, value: 52000, size: 1.5, kg: 999,
-    colors: ['#05050a', '#140a28', '#a060ff'], glow: 0.2, pattern: PATTERN.stars, bait: 6, speed: 1.5, rarity: 'epic',
-    flavor: 'Infinitely dense. Please lift with your legs.' }),
-  S({ id: 'voidmaw', name: 'Void Maw', zone: 'void', model: 'angler', depth: [100, 2000], weight: 1.6, value: 0, size: 3, kg: 500,
-    colors: ['#000000', '#140a28', '#ff3a8a'], glow: 0.5, bait: 0, speed: 5, rarity: 'uncommon', hazard: 'thief',
-    flavor: 'A mouth. In space. Eats your fish. Why not.' }),
-  S({ id: 'spacewhale', name: 'Cosmic Space Whale', zone: 'void', model: 'whale', depth: [800, 2400], weight: 0.08, value: 780000, size: 12, kg: 5000,
-    colors: ['#1a0a4a', '#6a4ad0', '#ff70d0'], glow: 0.8, pattern: PATTERN.stars, bait: 6, speed: 3, rarity: 'legendary',
-    flavor: 'The end of the journey. It has been waiting for you.' }),
+  // ---------------------------------------------------------------- Toxic Sludge Bay (L5)
+  S('toxic', 'sludgeminnow', 'Sludge Minnow', 'slim', [0, 200], 0.35, ['#6a9a2a', '#d0ff80', '#a0ff30'], 'common', 'Three eyes. Great depth perception.', { glow: 0.6, school: 6 }),
+  S('toxic', 'mutantbass', 'Mutant Bass', 'tall', [10, 250], 0.9, ['#5a6a3a', '#b0c080', '#a0ff30'], 'common', 'Has two heads. Both are grumpy.', { pattern: P.eyes }),
+  S('toxic', 'barrelcrab', 'Barrel Crab', 'crab', [20, 320], 0.5, ['#e0c020', '#303020', '#a0ff30'], 'uncommon', "Lives in a toxic barrel. It's rent controlled."),
+  S('toxic', 'glowpuffer', 'Radioactive Puffer', 'round', [30, 300], 0.7, ['#3a5a1a', '#8ad040', '#a0ff30'], 'uncommon', "Don't touch it. Don't even look at it.", { pattern: P.veins, glow: 0.4 }),
+  S('toxic', 'sludgeeel', 'Sludge Eel', 'eel', [50, 320], 2, ['#3a4a1a', '#6a8a2a', '#c0ff40'], 'uncommon', 'Slimier than your average eel. Which is saying something.', { glow: 0.5, pattern: P.veins }),
+  S('toxic', 'toxicjelly', 'Nuclear Jelly', 'jelly', [10, 300], 1.1, ['#a0ff30', '#60ff80', '#e0ff90'], 'common', 'Glows at 3,000 rads. Great night light, terrible friend.', { glow: 1.5, hazard: 'sting' }),
+  S('toxic', 'mutantshark', 'Mutant Shark', 'shark', [30, 320], 3, ['#4a5a3a', '#a0b080', '#c0ff40'], 'uncommon', 'Six eyes, three fins, zero manners.', { hazard: 'thief', pattern: P.eyes }),
+  S('toxic', 'geigerray', 'Geiger Ray', 'ray', [80, 320], 2, ['#2a3a1a', '#90b060', '#a0ff30'], 'rare', "Clicks when it's near. That's bad.", { glow: 0.6, pattern: P.spots }),
+  S('toxic', 'oozeoctopus', 'Ooze Octopus', 'octopus', [60, 320], 1.4, ['#5aa02a', '#b0ff70', '#e0ff40'], 'rare', 'Mostly goo. Somewhat octopus.', { time: 'night', glow: 0.8 }),
+  S('toxic', 'goldenmutant', 'Golden Mutant', 'tall', [150, 320], 1.4, ['#ffd030', '#fff0a0', '#a0ff30'], 'legendary', 'Mutated into... money? Somehow?', { glow: 1.0, pattern: P.eyes }),
+  S('toxic', 'sludgemonster', 'Sludge Mutant', 'round', [100, 320], 7, ['#4a6a1a', '#90c040', '#c0ff40'], 'boss', "It ate a whole factory. Then the factory's fish.", { pattern: P.eyes, glow: 0.4 }),
+
+  // ---------------------------------------------------------------- Magma Rift (L6)
+  S('magma', 'ember', 'Ember Minnow', 'slim', [5, 200], 0.35, ['#ff5a1a', '#ffb04a', '#ff3a00'], 'common', 'Toasty. Handle with oven mitts.', { glow: 1.2, school: 8, v: 0.8 }),
+  S('magma', 'magmapuffer', 'Magma Puffer', 'round', [30, 300], 0.8, ['#3a2a2a', '#5a3a2a', '#ff7a1a'], 'uncommon', 'Puffs up into a tiny volcano. Pop!', { pattern: P.veins }),
+  S('magma', 'obsidian', 'Obsidian Bass', 'tall', [60, 380], 1, ['#1a1a24', '#3a3a48', '#ff4a1a'], 'uncommon', 'Sharp enough to cut glass. Is glass.', { pattern: P.veins }),
+  S('magma', 'lavaeel', 'Lava Eel', 'eel', [150, 430], 2.4, ['#2a1a1a', '#4a2a1a', '#ff6a00'], 'rare', 'A river of lava that learned to wiggle.', { pattern: P.veins, glow: 0.2 }),
+  S('magma', 'salamander', 'Salamander Shark', 'shark', [40, 400], 3.4, ['#6a2a1a', '#ffb04a', '#ff5a1a'], 'uncommon', 'Chomps fish off your hook, then chomps the hook.', { pattern: P.veins, hazard: 'thief' }),
+  S('magma', 'firejelly', 'Fire Jelly', 'jelly', [10, 400], 1.1, ['#ff8a2a', '#ff5a10', '#ffd07a'], 'common', 'A floating campfire that hates you.', { glow: 1.4, hazard: 'sting' }),
+  S('magma', 'phoenixkoi', 'Phoenix Koi', 'slim', [300, 430], 1.6, ['#ff3a1a', '#ffd23a', '#ff8a1a'], 'legendary', 'Reborn from its own ashes every Tuesday.', { glow: 1.6, pattern: P.veins }),
+  S('magma', 'lavacrab', 'Lava Crab', 'crab', [10, 430], 0.5, ['#2a1a1a', '#ff8a3a', '#ff4a10'], 'common', 'Molten claws. Toasty hugs.', { pattern: P.veins }),
+  S('magma', 'cinderray', 'Cinder Ray', 'ray', [60, 400], 2, ['#2a2020', '#6a3a2a', '#ff5a10'], 'uncommon', 'Leaves a trail of sparks. And smoke. And regret.', { pattern: P.veins }),
+  S('magma', 'magmaturtle', 'Magma Turtle', 'turtle', [100, 430], 1.6, ['#3a2a24', '#ff9a4a', '#ff5a10'], 'rare', 'Its shell is a tiny volcano. Do not pet.', { pattern: P.veins, glow: 0.3 }),
+  S('magma', 'magmawyrm', 'Magma Wyrm', 'serpent', [200, 430], 18, ['#2a1a1a', '#ff8a2a', '#ff3a00'], 'boss', 'It swims through lava like you swim through water.', { pattern: P.veins, glow: 0.6 }),
+
+  // ---------------------------------------------------------------- Storm Reach (L7)
+  S('storm', 'thunderfish', 'Thunder Minnow', 'slim', [0, 250], 0.4, ['#3a5a8a', '#e0f0ff', '#70e0ff'], 'common', 'Zaps anything it touches, including friends.', { glow: 1.0, school: 7 }),
+  S('storm', 'stormbass', 'Squall Bass', 'tall', [10, 300], 0.9, ['#4a5a6a', '#c0d0e0', '#2a3a4a'], 'common', 'Always looks windswept. Very dramatic.'),
+  S('storm', 'raincrab', 'Raincoat Crab', 'crab', [20, 480], 0.5, ['#ffd020', '#fff0a0', '#e0a010'], 'common', 'Always prepared.'),
+  S('storm', 'surgeeel', 'Surge Eel', 'eel', [40, 400], 2.2, ['#2a3a5a', '#70a0ff', '#a0f0ff'], 'uncommon', "The electric eel's even angrier cousin.", { glow: 0.8 }),
+  S('storm', 'galeray', 'Gale Ray', 'ray', [60, 480], 2.4, ['#5a6a7a', '#e0e8f0', '#3a4a5a'], 'uncommon', 'Flaps so hard it makes weather.'),
+  S('storm', 'cloudjelly', 'Cloud Jelly', 'jelly', [5, 400], 1.2, ['#d0d8e0', '#a0b0c0', '#ffffff'], 'common', 'A thundercloud with tentacles. Charming.', { glow: 0.6, hazard: 'sting' }),
+  S('storm', 'stormshark', 'Storm Shark', 'shark', [40, 480], 3.5, ['#3a4a5a', '#c0c8d0', '#70e0ff'], 'uncommon', 'Rides the lightning. Steals your fish.', { hazard: 'thief', glow: 0.3 }),
+  S('storm', 'tempest', 'Tempest Swordfish', 'sword', [80, 480], 2.8, ['#2a4a7a', '#d0e0f0', '#70e0ff'], 'rare', 'Its sword is a lightning rod. It knows.', { glow: 0.5 }),
+  S('storm', 'voltoctopus', 'Lightning Octopus', 'octopus', [60, 480], 1.5, ['#3a3a8a', '#a0a0ff', '#e0ff60'], 'rare', 'Eight arms, eight batteries.', { glow: 1.0, weather: 'storm' }),
+  S('storm', 'eyeofstorm', 'Eye of the Storm', 'eyeball', [200, 480], 1.8, ['#f0f4ff', '#70e0ff', '#3a4a6a'], 'legendary', 'Calm in the middle. Very angry at the edges.', { glow: 1.0 }),
+  S('storm', 'stormserpent', 'Storm Serpent', 'serpent', [150, 480], 20, ['#2a3a5a', '#a0c0ff', '#70e0ff'], 'boss', 'It IS the storm.', { glow: 0.8 }),
+
+  // ---------------------------------------------------------------- Pirate's Graveyard (L8)
+  S('pirate', 'bonefish', 'Bonefish', 'slim', [0, 300], 0.6, ['#e8e0d0', '#fffaf0', '#a09888'], 'common', 'All bones, no fish.', { pattern: P.stripes, school: 5 }),
+  S('pirate', 'doubloon', 'Doubloon Fish', 'round', [20, 400], 0.4, ['#ffd030', '#fff0a0', '#c09010'], 'common', 'Worth its weight in gold. Literally.', { glow: 0.3, v: 1.2 }),
+  S('pirate', 'piratefish', 'Pirate Parrotfish', 'tall', [10, 350], 0.8, ['#c02a2a', '#ffe0a0', '#1a1a1a'], 'uncommon', 'Arr! Squawk! Blub!'),
+  S('pirate', 'cursedcrab', 'Cursed Crab', 'crab', [20, 520], 0.5, ['#2a4a3a', '#a0ffd0', '#50ffb0'], 'uncommon', 'Pinches for all eternity.', { glow: 0.6 }),
+  S('pirate', 'anchoreel', 'Anchor Eel', 'eel', [80, 520], 2.2, ['#3a3a3a', '#8a8a8a', '#6a4a2a'], 'uncommon', 'Heavy. Rusty. Surprisingly affectionate.'),
+  S('pirate', 'phantomjelly', 'Phantom Jelly', 'jelly', [10, 450], 1.2, ['#a0ffd0', '#50ffb0', '#e0fff0'], 'common', 'Boo. Also, zap.', { glow: 1.2, hazard: 'sting' }),
+  S('pirate', 'skeletonshark', 'Skeleton Shark', 'shark', [40, 520], 3.5, ['#e8e0d0', '#fffaf0', '#50ffb0'], 'uncommon', 'Has no stomach. Steals your fish anyway.', { hazard: 'thief', pattern: P.stripes }),
+  S('pirate', 'ghostray', 'Ghost Ray', 'ray', [100, 520], 2.4, ['#b0ffe0', '#e0fff8', '#50ffb0'], 'rare', 'Passes through walls. Not through nets.', { glow: 1.0, time: 'night' }),
+  S('pirate', 'cannonpuffer', 'Cannonball Puffer', 'round', [60, 520], 0.8, ['#2a2a2a', '#5a5a5a', '#ff6a1a'], 'rare', 'Loaded and ready to fire.'),
+  S('pirate', 'davyjones', "Davy Jones' Angler", 'angler', [250, 520], 1.8, ['#1a3a30', '#3a5a4a', '#50ffb0'], 'legendary', 'Keeps a locker. Nobody knows what is inside.', { glow: 0.6, weather: 'fog' }),
+  S('pirate', 'ghostwhale', 'Ghost Whale', 'whale', [200, 520], 16, ['#a0ffd0', '#e0fff0', '#50ffb0'], 'boss', 'Captain of the graveyard. Still hungry after 300 years.', { glow: 1.0 }),
+
+  // ---------------------------------------------------------------- Sunken Atlantis (L9)
+  S('atlantis', 'goldfin', 'Goldfin', 'slim', [0, 400], 0.4, ['#ffd030', '#fff8d0', '#ffb010'], 'common', 'Pure gold scales. Literally rich.', { glow: 0.3, school: 6 }),
+  S('atlantis', 'marbleray', 'Marble Ray', 'ray', [20, 500], 1.8, ['#f0ece0', '#ffffff', '#c0b8a0'], 'common', 'Carved by the finest Atlantean sculptors.', { pattern: P.veins }),
+  S('atlantis', 'triton', 'Triton Snapper', 'tall', [10, 450], 0.9, ['#3ad0e0', '#e0fff8', '#ffd060'], 'common', 'Carries a tiny trident. Very proud of it.'),
+  S('atlantis', 'hippocampus', 'Hippocampus', 'seahorse', [20, 500], 1.2, ['#40c0e0', '#e0f8ff', '#ffd060'], 'uncommon', 'Half horse, half fish, all business.', { glow: 0.3 }),
+  S('atlantis', 'crowncrab', 'Crowned Crab', 'crab', [30, 650], 0.6, ['#ffd030', '#fff0c0', '#40c0e0'], 'uncommon', 'The crown is real. The crab is also real.', { glow: 0.3 }),
+  S('atlantis', 'sirenjelly', 'Siren Jelly', 'jelly', [10, 600], 1.2, ['#ffe0a0', '#ffd060', '#ffffff'], 'common', 'Sings a beautiful song. Then stings.', { glow: 1.2, hazard: 'sting' }),
+  S('atlantis', 'guardianturtle', 'Guardian Turtle', 'turtle', [100, 650], 2, ['#c8a040', '#fff0c0', '#40c0e0'], 'rare', 'Has guarded the gates for 10,000 years. Taking a break.', { glow: 0.5 }),
+  S('atlantis', 'oracle', 'Oracle Octopus', 'octopus', [100, 650], 1.6, ['#6a40c0', '#e0d0ff', '#ffd060'], 'rare', 'Predicts the future. Mostly more fish.', { glow: 0.8 }),
+  S('atlantis', 'tridentfish', 'Trident Swordfish', 'sword', [150, 650], 3, ['#ffd030', '#fff8e0', '#40c0e0'], 'epic', 'Three swords are better than one.', { glow: 0.5 }),
+  S('atlantis', 'poseidonkoi', "Poseidon's Koi", 'slim', [300, 650], 1.8, ['#ffffff', '#ffd060', '#40e0ff'], 'legendary', 'The sea god\'s favorite pet. Do not tell him.', { glow: 1.5, pattern: P.spots }),
+  S('atlantis', 'goldenhippo', 'Golden Hippocampus', 'seahorse', [200, 650], 12, ['#ffd030', '#fff8d0', '#40e0ff'], 'boss', "Poseidon's steed. He will want it back.", { glow: 1.0 }),
+
+  // ---------------------------------------------------------------- Drowned Temple (L10)
+  S('temple', 'whisper', 'Whispering Anchovy', 'slim', [5, 300], 0.3, ['#4a5a4a', '#8aa08a', '#90ff80'], 'common', 'Whispers your name. You never told it your name.', { glow: 0.6, pattern: P.lateral, school: 8 }),
+  S('temple', 'manyeyed', 'Many-Eyed Grouper', 'round', [60, 450], 1.3, ['#3a4a3a', '#5a6a50', '#c0ff80'], 'uncommon', 'It sees you. It sees you from several angles.', { pattern: P.eyes }),
+  S('temple', 'lurker', 'Lurking Angler', 'angler', [150, 650], 1.4, ['#1a2a24', '#2a3a30', '#7aff9a'], 'rare', 'Its little light says "trust me".', { glow: 0.2 }),
+  S('temple', 'eye', 'Floating Eye', 'eyeball', [100, 600], 1.2, ['#f0e8d8', '#7aff5a', '#8a5a6a'], 'rare', 'Blinks when you are not looking.', { glow: 0.3 }),
+  S('temple', 'deepsquid', 'Deep One Squid', 'squid', [200, 800], 2.4, ['#2a4a3a', '#4a7a5a', '#90ffb0'], 'rare', 'Knows a guy. The guy is very large and sleeps under a temple.', { glow: 0.5 }),
+  S('temple', 'horror', 'Tentacle Horror', 'squid', [60, 800], 4, ['#3a1a3a', '#6a3a6a', '#c070ff'], 'uncommon', 'Grabs fish off your line with all eight hands.', { glow: 0.4, hazard: 'thief' }),
+  S('temple', 'spawn', 'Spawn of Cthulhu', 'squid', [450, 900], 5, ['#2a6a4a', '#5aa07a', '#60ff90'], 'legendary', "Ph'nglui mglw'nafh... it's just a baby. A very big baby.", { glow: 1.2, pattern: P.eyes }),
+  S('temple', 'cultistcrab', 'Cultist Crab', 'crab', [20, 900], 0.5, ['#3a2a4a', '#8a7a9a', '#90ff80'], 'common', 'Chants quietly at night. Mostly about clams.', { pattern: P.eyes }),
+  S('temple', 'elderoct', 'Elder Octopus', 'octopus', [200, 900], 2, ['#2a3a5a', '#6a8aaa', '#80ffb0'], 'uncommon', 'Remembers when the temple was new.', { glow: 0.6 }),
+  S('temple', 'dagon', 'Dagon Fish', 'tall', [300, 900], 2.2, ['#2a4a3a', '#6a9a7a', '#c0ff80'], 'epic', 'Worshipped by fish. Feared by fishermen.', { pattern: P.eyes, glow: 0.4 }),
+  S('temple', 'cthulhucousin', "Cthulhu's Cousin", 'octopus', [400, 900], 12, ['#2a5a4a', '#6aa08a', '#60ff90'], 'boss', 'Not the famous one. The one who sends postcards.', { pattern: P.eyes, glow: 0.8 }),
+
+  // ---------------------------------------------------------------- The Void (L11)
+  S('void', 'stardust', 'Stardust Minnow', 'slim', [0, 800], 0.35, ['#5a3ad0', '#b8a0ff', '#ffffff'], 'common', 'Made of the same stuff as you. Mostly sparkles.', { pattern: P.stars, glow: 0.9, school: 9 }),
+  S('void', 'comet', 'Comet Tetra', 'slim', [50, 1200], 0.5, ['#6ad0ff', '#ffffff', '#ffe07a'], 'uncommon', 'Leaves a tail. Makes wishes come true (unverified).', { glow: 1.8 }),
+  S('void', 'nebjelly', 'Nebula Jelly', 'jelly', [100, 1500], 1.6, ['#c060ff', '#40c0ff', '#ff70d0'], 'rare', 'A whole galaxy, wobbling. Friendly, for once.', { glow: 1.5, pattern: P.stars }),
+  S('void', 'moonray', 'Moon Ray', 'ray', [200, 1500], 3.5, ['#d8d8f0', '#ffffff', '#a0a0d0'], 'rare', 'Has craters. Controls a very small tide.', { glow: 0.6, pattern: P.spots }),
+  S('void', 'holepuffer', 'Black Hole Puffer', 'round', [400, 2000], 1.5, ['#05050a', '#140a28', '#a060ff'], 'epic', 'Infinitely dense. Please lift with your legs.', { glow: 0.2, pattern: P.stars }),
+  S('void', 'voidmaw', 'Void Maw', 'angler', [100, 2000], 3, ['#000000', '#140a28', '#ff3a8a'], 'uncommon', 'A mouth. In space. Eats your fish. Why not.', { glow: 0.5, hazard: 'thief' }),
+  S('void', 'spacewhale', 'Cosmic Space Whale', 'whale', [800, 2400], 12, ['#1a0a4a', '#6a4ad0', '#ff70d0'], 'legendary', 'It has been waiting for you.', { glow: 0.8, pattern: P.stars }),
+  S('void', 'astrocrab', 'Astro Crab', 'crab', [50, 2400], 0.6, ['#e0e0f0', '#ffffff', '#6a4ad0'], 'common', 'One small pinch for crab-kind.', { pattern: P.stars }),
+  S('void', 'ringhorse', 'Ringed Seahorse', 'seahorse', [100, 2000], 1, ['#e0a060', '#fff0d0', '#a060ff'], 'uncommon', 'Wears Saturn as a hula hoop.', { pattern: P.stars, glow: 0.5 }),
+  S('void', 'quasar', 'Quasar Squid', 'squid', [300, 2400], 2.2, ['#ffffff', '#a0e0ff', '#ff70d0'], 'rare', 'Brightest thing for a billion miles.', { glow: 2 }),
+  S('void', 'worldeater', 'World Eater', 'whale', [500, 2400], 30, ['#0a0520', '#3a2a8a', '#ff70d0'], 'boss', 'It swallowed a galaxy once. Just a small one.', { glow: 1.0, pattern: P.stars }),
+
+  // ---------------------------------------------------------------- Junk (anywhere)
+  S('open', 'boot', 'Old Boot', 'boot', [0, 3000], 0.45, ['#5a3a1a', '#3a2a1a', '#8a6a4a'], 'common', 'Size 11. Left foot. Still looking for the right one.', { junk: true, anywhere: true, v: 2, weight: 0.8, bottom: true }),
+  S('open', 'bottle', 'Message in a Bottle', 'bottle', [0, 3000], 0.4, ['#6ad0a0', '#e0fff0', '#f0e0b0'], 'uncommon', "It says 'Help! I'm stuck in a fishing game!' There are pearls inside.", { junk: true, anywhere: true, v: 5, weight: 0.4 }),
+  S('open', 'duck', 'Rubber Duck', 'duck', [0, 3000], 0.35, ['#ffd020', '#ffe060', '#ff8a10'], 'rare', 'Squeak. Collectors pay a fortune for these.', { junk: true, anywhere: true, v: 300, weight: 0.12 }),
 ];
 
 export const speciesById = new Map(SPECIES.map((s) => [s.id, s]));
 
 export const RARITY_COLOR: Record<Rarity, string> = {
-  common: '#b8c4cc', uncommon: '#5fd068', rare: '#4aa8ff', epic: '#c070ff', legendary: '#ffb020',
+  common: '#b8c4cc', uncommon: '#5fd068', rare: '#4aa8ff', epic: '#c070ff', legendary: '#ffb020', boss: '#ff4a4a',
 };
 
-/** Which species can appear at a point: zone list plus a trickle of open-sea fish at zone edges. */
-export function speciesForZone(zone: ZoneId): Species[] {
-  return SPECIES.filter((s) => s.zone === zone);
-}
+export const BOSS_FOR_ZONE = new Map(SPECIES.filter((s) => s.boss).map((s) => [s.zone, s]));
+
+/** Catchable species (the fish log): no hazards. */
+export const CATCHABLE = SPECIES.filter((s) => !s.hazard);

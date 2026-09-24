@@ -114,6 +114,21 @@ export function kelpMesh(): MeshData {
   return b.build('kelp');
 }
 
+export function seagrassMesh(): MeshData {
+  const b = new Builder();
+  const r = rng(33);
+  const c1 = hex('#4a9a3a'), c2 = hex('#9ad05a');
+  for (let i = 0; i < 14; i++) {
+    const a = r() * Math.PI * 2, d = r() * 1.2;
+    const base = new Vec3(Math.cos(a) * d, 0, Math.sin(a) * d);
+    const h = 1.2 + r() * 1.8;
+    const lean = new Vec3(r() - 0.5, 0, r() - 0.5).scale(0.6);
+    const spine = [0, 1, 2, 3, 4].map((k) => base.clone().add(new Vec3(0, (k / 4) * h, 0)).addScaled(lean, (k / 4) ** 2));
+    b.blade(spine, [0.08, 0.07, 0.06, 0.04, 0.005], new Vec3(Math.cos(a + 1.3), 0, Math.sin(a + 1.3)), c1, c2);
+  }
+  return b.build('seagrass');
+}
+
 export function palmMesh(): MeshData {
   const b = new Builder();
   const trunk = hex('#a07a4a'), trunk2 = hex('#8a6438'), frond = hex('#3fae4a'), frond2 = hex('#6fd05a');

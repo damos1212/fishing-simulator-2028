@@ -6,7 +6,13 @@ import { loadSave } from './game/save';
 import { UI } from './ui/ui';
 import { buildHeightMap, buildTerrainMesh } from './world/terrain';
 
-const nextFrame = () => new Promise((r) => requestAnimationFrame(() => setTimeout(r, 0)));
+// Yield so the loading bar can paint; falls back to a timer when the tab is hidden (no rAF).
+const nextFrame = () => new Promise<void>((r) => {
+  let done = false;
+  const go = () => { if (!done) { done = true; r(); } };
+  requestAnimationFrame(() => setTimeout(go, 0));
+  setTimeout(go, 60);
+});
 
 async function main() {
   const canvas = document.getElementById('game') as HTMLCanvasElement;
@@ -27,18 +33,25 @@ async function main() {
     return;
   }
   const r = new Renderer(gpu);
+  r.renderScale = save.settings.quality ?? 1;
   window.addEventListener('resize', () => r.resize());
 
   let assetP = 0, worldP = 0;
-  const progress = () => ui.setLoading(Math.min(0.99, assetP * 0.5 + worldP * 0.5));
+  const progress = (label = '') => ui.setLoading(Math.min(0.99, assetP * 0.4 + worldP * 0.6), label);
   const assetsPromise = loadAssets(r, (p) => { assetP = p; progress(); });
   await nextFrame();
-  const hm = buildHeightMap(640);
-  r.setHeightMap(hm, 640);
-  worldP = 0.4; progress();
+  const t0 = performance.now();
+  progress('Filling the ocean...');
   await nextFrame();
-  const terrain = r.registerMesh(buildTerrainMesh(480));
-  worldP = 1; progress();
+  r.setHeightMap(buildHeightMap(), 800);
+  worldP = 0.4; progress('Raising islands...');
+  await nextFrame();
+  const terrain = r.registerMesh(buildTerrainMesh());
+  worldP = 0.8; progress('Drawing sea charts...');
+  await nextFrame();
+  ui.prepareMap();
+  worldP = 1; progress('Waking up the fish...');
+  console.info(`world generated in ${Math.round(performance.now() - t0)}ms`);
   const assets = await assetsPromise;
 
   game = new Game(r, assets, terrain, ui, save, canvas);
@@ -47,6 +60,11 @@ async function main() {
     requestAnimationFrame(loop);
   };
   requestAnimationFrame(loop);
+  // debug helper: advance the simulation manually (e.g. in a background tab where rAF is paused)
+  let simT = performance.now();
+  (window as unknown as { __step: (n: number, dt?: number) => void }).__step = (n, dt = 16.7) => {
+    for (let i = 0; i < n; i++) { simT = Math.max(simT + dt, performance.now()); game!.frame(simT); }
+  };
   ui.setLoading(1);
 }
 

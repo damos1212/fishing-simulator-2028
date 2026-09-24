@@ -32,130 +32,154 @@ export interface Stats {
   cooler: number;
 }
 
-const T = (name: string, cost: number, desc: string, stats: Partial<Stats>): Tier => ({ name, cost, desc, stats });
+/** Base fish value per zone level; every price in the game scales from this curve. */
+export const LEVEL_VALUE = [10, 30, 100, 260, 620, 1400, 3000, 6500, 14000, 30000, 65000, 140000];
+
+/** Rounds to two significant digits so prices read nicely. */
+export function nicePrice(v: number) {
+  if (v < 100) return Math.round(v / 5) * 5;
+  const p = Math.pow(10, Math.floor(Math.log10(v)) - 1);
+  return Math.round(v / p) * p;
+}
+const price = (level: number, k: number) => nicePrice(LEVEL_VALUE[Math.min(level, LEVEL_VALUE.length - 1)] * k);
+
+type Row = [name: string, desc: string, stats: Partial<Stats>, level: number];
+const track = (id: TrackId, name: string, icon: string, blurb: string, k: number, rows: Row[]): Track => ({
+  id, name, icon, blurb,
+  tiers: rows.map(([n, d, st, lvl], i) => ({ name: n, desc: d, stats: st, cost: i === 0 ? 0 : price(Math.max(lvl - 1, 0), k) })),
+});
 
 export const TRACKS: Track[] = [
-  {
-    id: 'rod', name: 'Rods', icon: 'rod', blurb: 'Longer line = deeper water. Stronger line = bigger fish.',
-    tiers: [
-      T('Twig & String', 0, 'Found it on the beach.', { lineLength: 45, lineStrength: 5 }),
-      T('Bamboo Rod', 150, 'Bendy, but it works!', { lineLength: 85, lineStrength: 12 }),
-      T('Fiberglass Pro', 900, 'Now we\'re fishing.', { lineLength: 160, lineStrength: 30 }),
-      T('Carbon Striker', 4500, 'Light, strong, very shiny.', { lineLength: 270, lineStrength: 80 }),
-      T('Titanium Titan', 18000, 'Could lift a car. Please don\'t.', { lineLength: 450, lineStrength: 220 }),
-      T('Abyssal Spire', 85000, 'Forged from a sunken lighthouse.', { lineLength: 700, lineStrength: 600 }),
-      T('Cosmic String', 420000, 'One-dimensional. Infinitely strong.', { lineLength: 2500, lineStrength: 6000 }),
-    ],
-  },
-  {
-    id: 'reel', name: 'Reels', icon: 'reel', blurb: 'Reel in faster and fight big fish longer.',
-    tiers: [
-      T('Rusty Reel', 0, 'Squeaks. Loudly.', { reelSpeed: 5 }),
-      T('Spinny 2000', 120, 'State of the art (in 2000).', { reelSpeed: 7 }),
-      T('Turbo Reel', 700, 'Has a racing stripe.', { reelSpeed: 10 }),
-      T('Hydro-Crank', 3800, 'Water-powered reeling.', { reelSpeed: 14 }),
-      T('Jet Reel', 16000, 'Please wear eye protection.', { reelSpeed: 19 }),
-      T('Quantum Spool', 70000, 'Reels in before you cast.', { reelSpeed: 26 }),
-    ],
-  },
-  {
-    id: 'bait', name: 'Bait', icon: 'bait', blurb: 'Fancier fish want fancier bait. Better bait attracts from farther.',
-    tiers: [
-      T('Soggy Bread', 0, 'The classic.', { baitTier: 0, attract: 3 }),
-      T('Wiggly Worm', 100, 'Wiggles with enthusiasm.', { baitTier: 1, attract: 5 }),
-      T('Shiny Spoon', 600, 'Fish love shiny things.', { baitTier: 2, attract: 7 }),
-      T('Glow Shrimp', 3000, 'Glows in the deep. Smells amazing.', { baitTier: 3, attract: 9 }),
-      T('Magma Grub', 14000, 'Spicy. Very spicy.', { baitTier: 4, attract: 11 }),
-      T('Elder Eye', 60000, 'It looks back.', { baitTier: 5, attract: 13 }),
-      T('Star Bait', 250000, 'A tiny captured star.', { baitTier: 6, attract: 16 }),
-    ],
-  },
-  {
-    id: 'hooks', name: 'Hooks', icon: 'hook', blurb: 'More hooks = more fish per cast.',
-    tiers: [
-      T('Bent Nail', 0, 'One fish at a time.', { hooks: 1 }),
-      T('Rusty Hook', 80, 'Two whole hooks.', { hooks: 2 }),
-      T('Double Hook', 450, 'Double trouble.', { hooks: 3 }),
-      T('Treble Trouble', 2500, 'Triple trouble, plus two.', { hooks: 5 }),
-      T('Gang Hooks', 12000, 'A whole gang of hooks.', { hooks: 8 }),
-      T('Hook Hydra', 55000, 'Cut one off, two grow back.', { hooks: 12 }),
-      T('Singularity Snare', 300000, 'Everything nearby is on the hook.', { hooks: 18 }),
-    ],
-  },
-  {
-    id: 'sinker', name: 'Sinkers', icon: 'sinker', blurb: 'Dive faster and steer your lure faster.',
-    tiers: [
-      T('Pebble', 0, 'A rock. On a string.', { diveSpeed: 6, swimSpeed: 5 }),
-      T('Lead Weight', 90, 'Heavy metal!', { diveSpeed: 8, swimSpeed: 6 }),
-      T('Tungsten Drop', 600, 'Dense and determined.', { diveSpeed: 11, swimSpeed: 7.5 }),
-      T('Prop Sinker', 3500, 'It has a propeller now.', { diveSpeed: 15, swimSpeed: 9 }),
-      T('Jet Sinker', 15000, 'Why is there a jet on a sinker?', { diveSpeed: 20, swimSpeed: 11 }),
-      T('Gravity Well', 65000, 'Warps spacetime slightly downwards.', { diveSpeed: 28, swimSpeed: 14 }),
-    ],
-  },
-  {
-    id: 'lamp', name: 'Lamps', icon: 'lamp', blurb: 'The deep is dark. Bring a light.',
-    tiers: [
-      T('No Lamp', 0, 'Good luck down there.', { lampRadius: 0 }),
-      T('Glowstick', 250, 'Crack it and shake it!', { lampRadius: 12 }),
-      T('Dive Torch', 1500, 'A proper light.', { lampRadius: 20 }),
-      T('Halogen Beam', 7000, 'Bright enough to annoy fish.', { lampRadius: 30 }),
-      T('Anglerlight', 30000, 'Borrowed from an angler. Permanently.', { lampRadius: 45 }),
-      T('Mini Sun', 140000, 'Do not look directly at the lure.', { lampRadius: 70 }),
-    ],
-  },
+  track('rod', 'Rods', 'rod', 'Longer line = deeper water. Stronger line = bigger fish.', 15, [
+    ['Twig & String', 'Found it on the beach.', { lineLength: 45, lineStrength: 5 }, 0],
+    ['Bamboo Rod', 'Bendy, but it works!', { lineLength: 85, lineStrength: 12 }, 1],
+    ['Fiberglass Pro', "Now we're fishing.", { lineLength: 160, lineStrength: 30 }, 2],
+    ['Carbon Striker', 'Light, strong, very shiny.', { lineLength: 270, lineStrength: 80 }, 3],
+    ['Titanium Titan', "Could lift a car. Please don't.", { lineLength: 400, lineStrength: 200 }, 4],
+    ['Rock Candy Rod', 'Crunchy, sweet, unbreakable.', { lineLength: 520, lineStrength: 450 }, 5],
+    ['Magma-Forged Rod', 'Still warm from the forge.', { lineLength: 650, lineStrength: 900 }, 6],
+    ['Storm Caller', 'Lightning likes it. A lot.', { lineLength: 800, lineStrength: 1800 }, 7],
+    ['Ghost Bone Rod', 'Whispers when it bends.', { lineLength: 1000, lineStrength: 3500 }, 8],
+    ['Trident of Atlantis', 'Pointy end goes in the water.', { lineLength: 1250, lineStrength: 7000 }, 9],
+    ['Abyssal Spire', 'Forged from a sunken lighthouse.', { lineLength: 1700, lineStrength: 15000 }, 10],
+    ['Cosmic String', 'One-dimensional. Infinitely strong.', { lineLength: 3000, lineStrength: 60000 }, 11],
+  ]),
+  track('reel', 'Reels', 'reel', 'Reel in faster and fight big fish longer.', 12, [
+    ['Rusty Reel', 'Squeaks. Loudly.', { reelSpeed: 5 }, 0],
+    ['Spinny 2000', 'State of the art (in 2000).', { reelSpeed: 7 }, 1],
+    ['Turbo Reel', 'Has a racing stripe.', { reelSpeed: 10 }, 2],
+    ['Hydro-Crank', 'Water-powered reeling.', { reelSpeed: 14 }, 3],
+    ['Sugar Rush', 'Powered by pure candy.', { reelSpeed: 18 }, 5],
+    ['Jet Reel', 'Please wear eye protection.', { reelSpeed: 23 }, 6],
+    ['Thunder Spool', 'Charged by storms.', { reelSpeed: 28 }, 7],
+    ['Poseidon Winch', 'Borrowed from a god.', { reelSpeed: 35 }, 9],
+    ['Quantum Spool', 'Reels in before you cast.', { reelSpeed: 45 }, 10],
+  ]),
+  track('bait', 'Bait', 'bait', 'Each new sea needs fancier bait. Better bait attracts from farther.', 18, [
+    ['Soggy Bread', 'The classic.', { baitTier: 0, attract: 3 }, 0],
+    ['Wiggly Worm', 'Wiggles with enthusiasm. Kelp and coral fish love it.', { baitTier: 1, attract: 4.5 }, 1],
+    ['Shiny Spoon', 'Deep Blue fish love shiny things.', { baitTier: 2, attract: 6 }, 2],
+    ['Glow Shrimp', 'For the chilly fjord fish.', { baitTier: 3, attract: 7 }, 3],
+    ['Gummy Worm', 'Candy Lagoon approved.', { baitTier: 4, attract: 8 }, 4],
+    ['Mutant Maggot', 'Glows. Twitches. Toxic fish adore it.', { baitTier: 5, attract: 9 }, 5],
+    ['Magma Grub', 'Spicy. Very spicy.', { baitTier: 6, attract: 10 }, 6],
+    ['Thunder Fly', 'Buzzes with static.', { baitTier: 7, attract: 11 }, 7],
+    ['Cursed Doubloon', 'Pirate ghosts cannot resist gold.', { baitTier: 8, attract: 12 }, 8],
+    ['Golden Pearl', 'Fit for Atlantean royalty.', { baitTier: 9, attract: 13 }, 9],
+    ['Elder Eye', 'It looks back.', { baitTier: 10, attract: 15 }, 10],
+    ['Star Bait', 'A tiny captured star.', { baitTier: 11, attract: 18 }, 11],
+  ]),
+  track('hooks', 'Hooks', 'hook', 'More hooks = more fish per cast.', 10, [
+    ['Bent Nail', 'One fish at a time.', { hooks: 1 }, 0],
+    ['Rusty Hook', 'Two whole hooks.', { hooks: 2 }, 1],
+    ['Double Hook', 'Double trouble.', { hooks: 3 }, 2],
+    ['Treble Trouble', 'Triple trouble, plus one.', { hooks: 4 }, 3],
+    ['Gang Hooks', 'A whole gang of hooks.', { hooks: 6 }, 4],
+    ['Hook Hydra', 'Cut one off, two grow back.', { hooks: 8 }, 6],
+    ['Grappling Array', 'Mostly hooks, some rope.', { hooks: 11 }, 8],
+    ['Kraken Claws', 'Eight arms, eight hooks each.', { hooks: 14 }, 10],
+    ['Singularity Snare', 'Everything nearby is on the hook.', { hooks: 20 }, 11],
+  ]),
+  track('sinker', 'Sinkers', 'sinker', 'Dive faster and steer your lure faster.', 10, [
+    ['Pebble', 'A rock. On a string.', { diveSpeed: 6, swimSpeed: 5 }, 0],
+    ['Lead Weight', 'Heavy metal!', { diveSpeed: 8, swimSpeed: 6 }, 1],
+    ['Tungsten Drop', 'Dense and determined.', { diveSpeed: 11, swimSpeed: 7.5 }, 3],
+    ['Prop Sinker', 'It has a propeller now.', { diveSpeed: 15, swimSpeed: 9 }, 4],
+    ['Jet Sinker', 'Why is there a jet on a sinker?', { diveSpeed: 20, swimSpeed: 11 }, 6],
+    ['Torpedo Weight', 'Not technically a weapon.', { diveSpeed: 27, swimSpeed: 13 }, 8],
+    ['Gravity Well', 'Warps spacetime slightly downwards.', { diveSpeed: 36, swimSpeed: 16 }, 10],
+    ['Black Hole Bob', 'Falls faster than light. Almost.', { diveSpeed: 50, swimSpeed: 20 }, 11],
+  ]),
+  track('lamp', 'Lamps', 'lamp', 'The deep is dark. Bring a light.', 14, [
+    ['No Lamp', 'Good luck down there.', { lampRadius: 0 }, 0],
+    ['Glowstick', 'Crack it and shake it!', { lampRadius: 12 }, 2],
+    ['Dive Torch', 'A proper light.', { lampRadius: 20 }, 3],
+    ['Halogen Beam', 'Bright enough to annoy fish.', { lampRadius: 30 }, 4],
+    ['Anglerlight', 'Borrowed from an angler. Permanently.', { lampRadius: 42 }, 6],
+    ['Lightning Jar', 'Storm in a bottle.', { lampRadius: 55 }, 8],
+    ['Atlantean Orb', 'Ancient, golden, glowy.', { lampRadius: 70 }, 10],
+    ['Mini Sun', 'Do not look directly at the lure.', { lampRadius: 95 }, 11],
+  ]),
   {
     id: 'finder', name: 'Fish Finder', icon: 'finder', blurb: 'Find the good spots and the rare fish.',
     tiers: [
-      T('Your Eyeballs', 0, 'Look for birds and bubbles!', { finder: 0 }),
-      T('Beep-o-Matic Sonar', 400, 'Shows nearby hot spots on the map and a depth sonar.', { finder: 1 }),
-      T('Color Sonar', 5000, 'Shows every hot spot in the zone, plus fish on the sonar.', { finder: 2 }),
-      T('Legend Tracker', 50000, 'Points you to legendary fish while you\'re underwater.', { finder: 3 }),
+      { name: 'Your Eyeballs', cost: 0, desc: 'Look for birds and bubbles!', stats: { finder: 0 } },
+      { name: 'Beep-o-Matic Sonar', cost: 400, desc: 'Shows nearby hot spots on the map and a depth sonar.', stats: { finder: 1 } },
+      { name: 'Color Sonar', cost: 6000, desc: 'Shows far-away hot spots, plus fish colors on the sonar.', stats: { finder: 2 } },
+      { name: 'Legend Tracker', cost: 90000, desc: "Every hot spot, and an arrow to legendary fish underwater.", stats: { finder: 3 } },
     ],
   },
-  {
-    id: 'engine', name: 'Engines', icon: 'engine', blurb: 'Go fast. Go far.',
-    tiers: [
-      T('Putt-Putt', 0, 'Putt... putt...', { boatSpeed: 13 }),
-      T('Outboard 40', 200, 'Now with 40% more putt.', { boatSpeed: 18 }),
-      T('Twin Turbo', 1200, 'Twice the turbo.', { boatSpeed: 24 }),
-      T('Hydrojet', 6000, 'Whoosh!', { boatSpeed: 31 }),
-      T('Rocket Boat', 25000, 'Technically a rocket.', { boatSpeed: 40 }),
-      T('Warp Drive', 120000, 'Engage.', { boatSpeed: 52 }),
-    ],
-  },
+  track('engine', 'Engines', 'engine', 'Go fast. Go far.', 14, [
+    ['Putt-Putt', 'Putt... putt...', { boatSpeed: 13 }, 0],
+    ['Outboard 40', 'Now with 40% more putt.', { boatSpeed: 18 }, 1],
+    ['Twin Turbo', 'Twice the turbo.', { boatSpeed: 24 }, 2],
+    ['Hydrojet', 'Whoosh!', { boatSpeed: 31 }, 3],
+    ['Rocket Boat', 'Technically a rocket.', { boatSpeed: 40 }, 5],
+    ['Afterburner', 'Leaves a trail of fire. And fish.', { boatSpeed: 52 }, 7],
+    ['Warp Drive', 'Engage.', { boatSpeed: 66 }, 9],
+    ['Ludicrous Speed', "They've gone to plaid!", { boatSpeed: 85 }, 11],
+  ]),
   {
     id: 'hull', name: 'Hulls', icon: 'hull', blurb: 'Each hull unlocks a new, stranger part of the sea.',
     tiers: [
-      T('Wooden Tub', 0, 'Handles the Shallows, Kelp Coast and Deep Blue.', { hull: 0 }),
-      T('Ice Breaker', 6000, 'Unlocks Frostbite Fjord.', { hull: 1 }),
-      T('Heat Shield', 26000, 'Unlocks the Magma Rift.', { hull: 2 }),
-      T('Elder Ward', 110000, 'Unlocks the Drowned Temple.', { hull: 3 }),
-      T('Void Anchor', 500000, 'Unlocks The Void.', { hull: 4 }),
-    ],
+      ['Wooden Tub', 'Handles the Shallows, Kelp Coast, Coral Kingdom and Deep Blue.', 0],
+      ['Ice Breaker', 'Unlocks Frostbite Fjord.', 3],
+      ['Sugar-Glazed Hull', 'Unlocks the Candy Lagoon.', 4],
+      ['Hazmat Hull', 'Unlocks Toxic Sludge Bay.', 5],
+      ['Heat Shield', 'Unlocks the Magma Rift.', 6],
+      ['Storm Keel', 'Unlocks Storm Reach.', 7],
+      ['Ghost Lantern', "Unlocks the Pirate's Graveyard.", 8],
+      ['Pressure Hull', 'Unlocks Sunken Atlantis.', 9],
+      ['Elder Ward', 'Unlocks the Drowned Temple.', 10],
+      ['Void Anchor', 'Unlocks The Void.', 11],
+    ].map(([n, d, lvl], i) => ({ name: n as string, desc: d as string, stats: { hull: i }, cost: i === 0 ? 0 : price((lvl as number) - 1, 70) })),
   },
-  {
-    id: 'cooler', name: 'Coolers', icon: 'cooler', blurb: 'Carry more fish before heading home.',
-    tiers: [
-      T('Bucket', 0, 'It\'s a bucket.', { cooler: 6 }),
-      T('Styro Box', 150, 'Keeps fish cool-ish.', { cooler: 12 }),
-      T('Ice Chest', 900, 'Now with ice!', { cooler: 20 }),
-      T('Fish Hold', 5000, 'A whole room for fish.', { cooler: 35 }),
-      T('Freezer Hold', 22000, 'Very cold. Very roomy.', { cooler: 60 }),
-      T('Pocket Dimension', 100000, 'Bigger on the inside.', { cooler: 120 }),
-    ],
-  },
+  track('cooler', 'Coolers', 'cooler', 'Carry more fish before heading home.', 12, [
+    ['Bucket', "It's a bucket.", { cooler: 6 }, 0],
+    ['Styro Box', 'Keeps fish cool-ish.', { cooler: 12 }, 1],
+    ['Ice Chest', 'Now with ice!', { cooler: 20 }, 2],
+    ['Fish Hold', 'A whole room for fish.', { cooler: 32 }, 4],
+    ['Freezer Hold', 'Very cold. Very roomy.', { cooler: 50 }, 6],
+    ['Cargo Bay', 'Room for a whale. Almost.', { cooler: 75 }, 8],
+    ['Pocket Dimension', 'Bigger on the inside.', { cooler: 120 }, 10],
+    ['Infinite Icebox', 'Where do they all go?', { cooler: 200 }, 11],
+  ]),
 ];
 
 export const trackById = new Map(TRACKS.map((t) => [t.id, t]));
 
-export const HULL_COLORS = ['#2f5d8a', '#e8f2fa', '#3a3a40', '#1f5a40', '#1a0a30'];
+export const HULL_COLORS = ['#2f5d8a', '#e8f2fa', '#ff8ad0', '#6a8a2a', '#3a3a40', '#4a5a70', '#2a4a40', '#c8a040', '#1f5a40', '#1a0a30'];
 export const LURE_COLORS: [string, string, string][] = [
   ['#e05a3a', '#f7e0b0', '#ffd23a'],
   ['#d86aa0', '#ffd8e8', '#8a3a6a'],
   ['#c0c8d0', '#ffffff', '#ffd23a'],
   ['#3ad0ff', '#e0fbff', '#ff8a2a'],
+  ['#ff70c0', '#fff0a0', '#70e0ff'],
+  ['#8aff3a', '#203010', '#e0ff60'],
   ['#ff5a10', '#ffd07a', '#2a1a1a'],
+  ['#8ab0ff', '#ffffff', '#ffe040'],
+  ['#e0c040', '#3a2a10', '#50ffb0'],
+  ['#ffd060', '#fffae0', '#40d0e0'],
   ['#3a6a4a', '#c0ff80', '#7aff5a'],
   ['#2a1a5a', '#ffffff', '#ffe07a'],
 ];

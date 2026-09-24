@@ -47,6 +47,8 @@ export class FrameState {
   oceanPower = 2.2;
   mapExtent = 2600;
   mapPower = 1.6;
+  night = 0;
+  rain = 0;
   boatX = 0;
   boatZ = 0;
   boatHeading = 0;
@@ -89,7 +91,7 @@ export class FrameState {
     v4(108, this.width, this.height, 1 / this.width, 1 / this.height);
     v4(112, this.voidAmount, this.frost, this.lightFalloff, this.causticStrength);
     v4(116, this.oceanOffsetX, this.oceanOffsetZ, this.oceanExtent, this.oceanPower);
-    v4(120, this.mapExtent, this.mapPower, 0, 0);
+    v4(120, this.mapExtent, this.mapPower, this.night, this.rain);
     v4(124, this.boatX, this.boatZ, this.boatHeading, this.boatSpeed);
     c4(128, this.lava, this.lavaStrength);
     o.set(this.wake, 132);
