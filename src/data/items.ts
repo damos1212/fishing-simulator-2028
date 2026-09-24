@@ -29,7 +29,7 @@ export function itemPrice(it: Item, level: number) {
   return nicePrice(LEVEL_VALUE[Math.min(Math.max(level, 0), LEVEL_VALUE.length - 1)] * it.k);
 }
 
-export type CosmeticKind = 'paint' | 'hat' | 'flag' | 'lure' | 'line';
+export type CosmeticKind = 'paint' | 'hat' | 'flag' | 'lure' | 'line' | 'pet';
 
 export interface Cosmetic {
   id: string;
@@ -42,6 +42,8 @@ export interface Cosmetic {
   pattern?: number;
   glow?: number;
   mesh?: string;
+  /** Only obtainable as a story reward. */
+  quest?: boolean;
 }
 
 const P = (id: string, name: string, pearls: number, color: string): Cosmetic => ({ id, kind: 'paint', name, pearls, color });
@@ -98,9 +100,17 @@ export const COSMETICS: Cosmetic[] = [
   N('line-pink', 'Hot Pink', 3, '#ff5ab0'),
   N('line-blue', 'Sky Blue', 3, '#5ac8ff'),
   N('line-gold', 'Gold Thread', 10, '#ffc93c'),
+
+  { id: 'pet-none', kind: 'pet', name: 'No Pet', pearls: 0 },
+  { id: 'pet-crab', kind: 'pet', name: 'Pinchy the Crab', pearls: 12, mesh: 'PetCrab' },
+  { id: 'pet-cat', kind: 'pet', name: 'Mittens the Cat', pearls: 0, mesh: 'PetCat', quest: true },
+  { id: 'pet-penguin', kind: 'pet', name: 'Sir Waddles', pearls: 0, mesh: 'PetPenguin', quest: true },
+  { id: 'pet-parrot', kind: 'pet', name: 'Polly the Parrot', pearls: 0, mesh: 'PetParrot', quest: true },
+  { id: 'pet-ghost', kind: 'pet', name: 'Boo', pearls: 0, mesh: 'PetGhost', quest: true },
+  { id: 'pet-alien', kind: 'pet', name: 'Zorp', pearls: 0, mesh: 'PetAlien', quest: true },
 ];
 
 export const cosmeticById = new Map(COSMETICS.map((c) => [c.id, c]));
 export const DEFAULT_COSMETICS: Record<CosmeticKind, string> = {
-  paint: 'paint-default', hat: 'hat-souwester', flag: 'flag-yellow', lure: 'lure-default', line: 'line-white',
+  paint: 'paint-default', hat: 'hat-souwester', flag: 'flag-yellow', lure: 'lure-default', line: 'line-white', pet: 'pet-none',
 };

@@ -6,6 +6,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import fish  # noqa: E402
 import fish2  # noqa: E402
+import pets  # noqa: E402
 import props2  # noqa: E402
 import world  # noqa: E402
 
@@ -18,6 +19,8 @@ if not only or "fish" in only:
     fish.build(outdir)
 if not only or "fish2" in only:
     fish2.build(outdir)
+if not only or "pets" in only:
+    pets.build(outdir)
 for fn in world.BUILDERS + props2.BUILDERS:
     if not only or fn.__name__ in only:
         fn(outdir)

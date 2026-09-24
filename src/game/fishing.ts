@@ -8,7 +8,7 @@ import { Inst, type Renderer } from '../engine/renderer';
 import { waveHeight } from '../world/environment';
 import { heightAt } from '../world/terrain';
 import type { Assets } from './assets';
-import { catchFish, type CaughtFish, pickSpecies, rollSize, zonePool } from './economy';
+import { catchFish, type CaughtFish, MASTERY_BONUS, pickSpecies, rollSize, zonePool } from './economy';
 
 export type FishingState = 'idle' | 'aim' | 'flight' | 'under' | 'landing' | 'retrieve';
 
@@ -23,7 +23,8 @@ export type FishingEvent =
   | { type: 'treasure'; amount: number; pos: Vec3 }
   | { type: 'boss'; fish: FishActor }
   | { type: 'surge'; fish: FishActor }
-  | { type: 'enrage'; fish: FishActor };
+  | { type: 'enrage'; fish: FishActor }
+  | { type: 'perfect' };
 
 export class FishActor {
   pos = new Vec3();
@@ -65,6 +66,8 @@ export class FishActor {
 }
 
 const eyeInst = Inst.solid(0, 0);
+/** Power meter sweet spot for a perfect cast. */
+export const PERFECT: [number, number] = [0.86, 0.97];
 
 export interface FishingContext {
   stats: Stats;
@@ -88,6 +91,10 @@ export interface FishingContext {
   energy: number;
   golden: boolean;
   chum: { pos: Vec3; until: number } | null;
+  /** extra rare-fish multiplier (golden hour) */
+  rareBoost: number;
+  /** zones whose fish log is complete sell for more */
+  mastered: Set<ZoneId>;
 }
 
 export class Fishing {
@@ -140,7 +147,12 @@ export class Fishing {
     this.lureVel.set(this.castDir.x * this.castDist / T, (-h + (g * T * T) / 2) / T, this.castDir.z * this.castDist / T);
     this.flightT = 0;
     this.state = 'flight';
+    this.perfect = this.power >= PERFECT[0] && this.power <= PERFECT[1];
+    if (this.perfect) this.events.push({ type: 'perfect' });
   }
+
+  /** Released inside the sweet spot of the power meter: better odds for this cast. */
+  perfect = false;
 
   private predict(ctx: FishingContext) {
     const d = 5 + this.power * (this.maxCast(ctx.stats) - 5);
@@ -254,7 +266,7 @@ export class Fishing {
   private spawnFish(ctx: FishingContext, initial: boolean) {
     const chum = ctx.chum && ctx.chum.until > ctx.time && ctx.chum.pos.distanceXZ(this.lure) < 45 ? 1 : 0;
     const target = Math.round(34 * (1 + ctx.hotspot * 0.7) * (1 + chum));
-    const boost = (1 + ctx.hotspot * 2.5) * (ctx.lucky ? 3 : 1);
+    const boost = (1 + ctx.hotspot * 2.5) * (ctx.lucky ? 3 : 1) * (this.perfect ? 2 : 1) * ctx.rareBoost;
     let tries = 0;
     while (this.fish.length < target && tries++ < 60) {
       const ang = this.rand() * Math.PI * 2;
@@ -367,7 +379,7 @@ export class Fishing {
     const hd = Math.hypot(this.lure.x - ctx.boatPos.x, this.lure.z - ctx.boatPos.z);
     const bossFresh = this.hooked.some((f) => f.sp.boss && f.stamina > 0.05);
     if (ctx.reel && !bossFresh && this.lure.y > wh - 3 && (hd < 6 || tipDist < 5)) {
-      this.finish(ctx.golden);
+      this.finish(ctx);
       return;
     }
 
@@ -384,8 +396,8 @@ export class Fishing {
     this.spawnFish(ctx, false);
   }
 
-  private finish(golden: boolean) {
-    this.land.catches = this.hooked.map((f) => catchFish(f.sp, f.size, golden));
+  private finish(ctx: FishingContext) {
+    this.land.catches = this.hooked.map((f) => catchFish(f.sp, f.size, ctx.golden, ctx.mastered.has(f.sp.zone) ? MASTERY_BONUS : 1));
     this.land.from.copy(this.lure);
     this.flightT = 0;
     this.state = 'landing';

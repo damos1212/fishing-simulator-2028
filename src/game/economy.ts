@@ -18,6 +18,7 @@ export interface SaveStats {
   boots: number; bottles: number; ducks: number; treasures: number; contracts: number;
   upgrades: number; stolen: number; stung: number; maxHaul: number; bestCast: number; travels: number;
   itemsUsed: number; cosmetics: number; playTime: number;
+  maps: number; fragments: number; perfect: number; events: number;
 }
 
 export interface SaveData {
@@ -43,12 +44,14 @@ export interface SaveData {
   goldenHook: boolean;
   bossBait: boolean;
   dayTime: number;
+  quest: { index: number; progress: number; intro: boolean };
+  treasureMap: { x: number; z: number; zone: ZoneId } | null;
 }
 
 const newStats = (): SaveStats => ({
   casts: 0, caught: 0, earned: 0, deepest: 0, snapped: 0, legendaries: 0, bosses: 0, night: 0, storm: 0, rain: 0,
   boots: 0, bottles: 0, ducks: 0, treasures: 0, contracts: 0, upgrades: 0, stolen: 0, stung: 0, maxHaul: 0, bestCast: 0,
-  travels: 0, itemsUsed: 0, cosmetics: 0, playTime: 0,
+  travels: 0, itemsUsed: 0, cosmetics: 0, playTime: 0, maps: 0, fragments: 0, perfect: 0, events: 0,
 });
 
 export function newSave(): SaveData {
@@ -69,7 +72,7 @@ export function newSave(): SaveData {
     seenZones: [],
     tutorial: 0,
     inventory,
-    cosmetics: { owned: COSMETICS.filter((c) => c.pearls === 0).map((c) => c.id), equipped: { ...DEFAULT_COSMETICS } },
+    cosmetics: { owned: COSMETICS.filter((c) => c.pearls === 0 && !c.quest).map((c) => c.id), equipped: { ...DEFAULT_COSMETICS } },
     contracts: [],
     contractSerial: 0,
     achievements: [],
@@ -79,6 +82,8 @@ export function newSave(): SaveData {
     goldenHook: false,
     bossBait: false,
     dayTime: 0.32,
+    quest: { index: 0, progress: 0, intro: false },
+    treasureMap: null,
   };
 }
 
@@ -149,7 +154,7 @@ export function buy(save: SaveData, id: TrackId): boolean {
 
 export function buyCosmetic(save: SaveData, id: string): boolean {
   const c = cosmeticById.get(id);
-  if (!c || save.cosmetics.owned.includes(id) || save.pearls < c.pearls) return false;
+  if (!c || c.quest || save.cosmetics.owned.includes(id) || save.pearls < c.pearls) return false;
   save.pearls -= c.pearls;
   save.cosmetics.owned.push(id);
   save.cosmetics.equipped[c.kind] = id;
@@ -189,8 +194,27 @@ export function fishValue(sp: Species, size: number) {
   return Math.max(1, Math.round(sp.value * Math.pow(size, 1.6)));
 }
 
-export function catchFish(sp: Species, size: number, golden = false): CaughtFish {
-  return { id: sp.id, size, value: fishValue(sp, size) * (golden ? 2 : 1) };
+export function catchFish(sp: Species, size: number, golden = false, bonus = 1): CaughtFish {
+  return { id: sp.id, size, value: Math.round(fishValue(sp, size) * (golden ? 2 : 1) * bonus) };
+}
+
+/** Zones whose whole fish log is complete (bosses and junk excluded): their fish sell for more. */
+export function masteredZones(save: SaveData): Set<ZoneId> {
+  const out = new Set<ZoneId>();
+  for (const z of ALL_ZONES) {
+    const list = CATCHABLE.filter((s) => s.zone === z.id && !s.boss && !s.anywhere);
+    if (list.length && list.every((s) => save.dex[s.id])) out.add(z.id);
+  }
+  return out;
+}
+export const MASTERY_BONUS = 1.2;
+
+/** Grants a cosmetic (story rewards) and equips it. */
+export function grantCosmetic(save: SaveData, id: string) {
+  const c = cosmeticById.get(id);
+  if (!c) return;
+  if (!save.cosmetics.owned.includes(id)) save.cosmetics.owned.push(id);
+  save.cosmetics.equipped[c.kind] = id;
 }
 
 export interface CatchContext {

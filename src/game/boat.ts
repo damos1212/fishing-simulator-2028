@@ -33,6 +33,9 @@ export class Boat {
   hat = 'HatSouwester';
   flagInst = Inst.solid(1, 0.01);
   npc = false;
+  /** Pet mesh name from pets.glb, or '' for none. */
+  pet = '';
+  petBounce = 0;
   anchored = false;
   bumped = 0;
   private wakeT = 0;
@@ -143,6 +146,19 @@ export class Boat {
       mat4.multiply(this.m.radar, this.m.radar, mat4.compose(this.m.tmp, -px, -py, -pz));
       r.draw(boat.byName.get('Radar')!, this.m.radar, i.radar);
     }
+    // pet
+    if (this.pet) {
+      const mesh = a.models.pets.byName.get(this.pet);
+      if (mesh) {
+        const [px, py, pz] = PET_SPOT[this.pet] ?? [0, 0.82, 2.4];
+        this.petBounce = Math.max(0, this.petBounce - 0.02);
+        const hover = this.pet === 'PetGhost' || this.pet === 'PetAlien' ? 0.25 + Math.sin(time * 2) * 0.12 : 0;
+        const jump = Math.abs(Math.sin(this.petBounce * 18)) * this.petBounce * 0.8;
+        const yaw = Math.sin(time * 0.5) * 0.4 + this.petBounce * 12;
+        const pm = mat4.multiply(this.m.tmp2, this.matrix, mat4.compose(this.m.tmp, px, py + hover + jump, pz, yaw));
+        r.draw(mesh, pm, i.fisher);
+      }
+    }
     // fisherman
     const spot = boat.nodes.get('FisherSpot')!;
     const fm = this.m.fisher;
@@ -195,3 +211,8 @@ export class Boat {
 
 const flameInst = Inst.solid(2);
 flameInst.a.set([1, 0.55, 0.15, 5]);
+/** Where each pet sits on the boat (boat-local, +Z is the bow). */
+const PET_SPOT: Record<string, [number, number, number]> = {
+  PetCat: [0.45, 2.57, 1.0], PetParrot: [0.36, 3.72, 1.2], PetPenguin: [0.3, 0.82, 2.3],
+  PetCrab: [-0.3, 0.82, 2.4], PetGhost: [0, 2.7, 0.7], PetAlien: [0, 2.62, 0.6],
+};

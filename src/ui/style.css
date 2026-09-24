@@ -234,7 +234,7 @@ html, body { margin: 0; height: 100%; overflow: hidden; background: #0b1f33; fon
 #banner { top: 30%; }
 @media (max-width: 1150px) {
   #items { bottom: 96px; }
-  #contracts { width: 210px; }
+  #leftcol { width: 210px; }
   #contracts .ct { font-size: 12px; }
 }
 @media (max-height: 700px) {
@@ -242,3 +242,43 @@ html, body { margin: 0; height: 100%; overflow: hidden; background: #0b1f33; fon
 }
 #hooks .slot.wide { width: auto; padding: 0 12px; gap: 5px; display: flex; align-items: center; font-family: 'Lilita One'; font-size: 20px; }
 #hooks .slot.wide i { width: 16px; height: 16px; border-radius: 50%; border: 2px solid var(--ink); }
+
+/* ---------- story, events, photo mode */
+#leftcol { position: absolute; top: 190px; left: 16px; width: 250px; display: flex; flex-direction: column; gap: 8px; }
+#leftcol #contracts { position: static; width: auto; }
+#quest { background: linear-gradient(#fff6dc, #ffe7a8); border: 4px solid var(--ink); border-radius: 14px; padding: 6px 10px 7px; box-shadow: 0 4px 0 var(--ink); font-weight: 800; font-size: 13px; line-height: 1.25; }
+#quest .qh { display: flex; align-items: center; gap: 8px; font-size: 14px; color: #c05a00; }
+#quest .face { width: 28px; height: 28px; border-radius: 50%; border: 3px solid var(--ink); display: grid; place-items: center; font-size: 16px; flex: none; }
+#quest .qt { font-family: 'Lilita One'; font-size: 16px; margin: 3px 0 1px; }
+#quest small { font-size: 11px; opacity: .8; }
+#power s { position: absolute; top: 0; bottom: 0; left: 86%; width: 11%; background: repeating-linear-gradient(45deg, rgba(255,255,255,.55) 0 6px, rgba(255,255,255,.15) 6px 12px); border-left: 3px solid var(--ink); border-right: 3px solid var(--ink); z-index: 1; }
+#power i { position: relative; }
+#power b { z-index: 2; }
+#hud.photo > *:not(#photohint):not(#toasts) { display: none !important; }
+#photohint { position: absolute; top: 20px; left: 50%; transform: translateX(-50%); font-size: 28px; text-align: center; }
+#photohint small { display: block; font-family: Nunito; font-weight: 900; font-size: 15px; margin-top: 4px; }
+#photohint kbd { display: inline-block; font-family: 'Lilita One'; background: #fff; color: var(--ink); border: 2px solid var(--ink); border-radius: 6px; padding: 0 6px; text-shadow: none; }
+
+#dialog { align-items: flex-end; padding-bottom: 7vh; background: linear-gradient(transparent 50%, rgba(11,20,40,.55)); cursor: pointer; }
+#dialog .panel { width: min(860px, 92vw); flex-direction: row; gap: 18px; padding: 16px 22px 14px 16px; animation: slideup .35s cubic-bezier(.2,1.4,.4,1); }
+@keyframes slideup { from { transform: translateY(60px); opacity: 0; } }
+#dialog .portrait { width: 110px; height: 110px; flex: none; border-radius: 50%; border: 5px solid var(--ink); display: grid; place-items: center; font-size: 62px; box-shadow: 0 5px 0 var(--ink); animation: talk .5s ease-in-out infinite; }
+#dialog.ready .portrait { animation: none; }
+@keyframes talk { 50% { transform: translateY(-4px) rotate(-3deg); } }
+#dialog .body { flex: 1; display: flex; flex-direction: column; min-height: 120px; }
+#dialog .hdr { font-size: 15px; color: #c05a00; }
+#dialog .who b { font-size: 26px; font-weight: 400; }
+#dialog .who small { font-weight: 800; opacity: .6; }
+#dialog .text { flex: 1; font-weight: 800; font-size: 20px; line-height: 1.35; margin-top: 4px; min-height: 54px; }
+#dialog .next { align-self: flex-end; font-size: 15px; opacity: 0; color: #2a6adf; }
+#dialog.ready .next { opacity: 1; animation: pulse .8s infinite; }
+
+#ending { background: radial-gradient(ellipse at center, rgba(40,20,80,.5), rgba(5,5,20,.85)); }
+#ending .panel { width: min(640px, 92vw); padding: 24px 30px; text-align: center; gap: 8px; animation: slam .6s cubic-bezier(.2,1.6,.4,1); }
+#ending .big { font-size: 72px; color: var(--gold); transform: rotate(-3deg); }
+#ending p { font-weight: 800; font-size: 17px; margin: 4px 0; }
+#ending .cast { display: flex; justify-content: center; gap: 10px; margin: 6px 0; }
+#ending .cast span { width: 56px; height: 56px; border-radius: 50%; border: 4px solid var(--ink); display: grid; place-items: center; font-size: 30px; animation: bob 2s ease-in-out infinite; }
+#ending .cast span:nth-child(2n) { animation-delay: -1s; }
+#ending .btn { align-self: center; margin-top: 8px; }
+.mastered { font-family: 'Lilita One'; font-size: 14px; color: #fff; background: linear-gradient(#ffd23a, #e09000); border: 2px solid var(--ink); border-radius: 8px; padding: 1px 8px; vertical-align: middle; }

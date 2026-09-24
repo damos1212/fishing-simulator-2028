@@ -16,15 +16,17 @@ import { GameAudio, type Mood } from './audio';
 import { Boat } from './boat';
 import { CameraRig } from './camera';
 import {
-  buy, buyCosmetic, buyItem, type CaughtFish, computeStats, coolerValue, equipCosmetic, formatMoney, landCatch, progressLevel,
+  buy, buyCosmetic, buyItem, type CaughtFish, computeStats, coolerValue, equipCosmetic, formatMoney, landCatch, masteredZones, progressLevel,
   type SaveData, sellAll, useItem,
 } from './economy';
+import { NPCS, QUESTS } from '../data/quests';
+import { EVENT_INFO, WorldEvents } from './events';
 import { FishActor, Fishing, type FishingContext } from './fishing';
 import { FX } from './fx';
 import { Hotspots } from './hotspots';
 import { Input } from './input';
 import { Life } from './life';
-import { checkAchievements, fillContracts, progressContracts } from './progress';
+import { checkAchievements, completeQuest, currentQuest, fillContracts, progressContracts, questEvent, questStatus } from './progress';
 import { clearSave, writeSave } from './save';
 
 const MOOD: Record<ZoneId, Mood> = {
@@ -81,8 +83,18 @@ export class Game {
   private fpsAcc = { t: 0, n: 0, fps: 60 };
   /** Extra creatures to draw (debug/model preview via the console). */
   debugActors: FishActor[] = [];
+  events = new WorldEvents();
+  private mastered = new Set<ZoneId>();
+  private timeScale = 1;
+  private slowmo = 0;
+  private photo = false;
+  private captureNext = false;
+  private attract = { i: 0, t: 0 };
+  private lastHonk = 0;
+  private questCheckT = 0;
+  private fireworks = 0;
 
-  constructor(private r: Renderer, private a: Assets, terrain: GpuMesh, public ui: UI, public save: SaveData, canvas: HTMLCanvasElement) {
+  constructor(private r: Renderer, private a: Assets, terrain: GpuMesh, public ui: UI, public save: SaveData, private canvas: HTMLCanvasElement) {
     this.input = new Input(canvas);
     this.scenery = new Scenery(r, a, terrain);
     const aq = this.scenery.aquarium;
@@ -124,6 +136,56 @@ export class Game {
     this.input.wantLock = true;
     this.input.lock();
     this.ui.banner('Welcome to', this.zone.name, this.zone.tagline);
+    this.mastered = masteredZones(this.save);
+    setTimeout(() => this.questIntro(), 1200);
+  }
+
+  // ------------------------------------------------------------------ story
+  /** Shows the active quest's introduction once. */
+  private questIntro() {
+    const q = currentQuest(this.save);
+    if (!q || this.save.quest.intro || this.ui.modal !== 'none') return;
+    this.unlockForUI();
+    this.ui.dialog(NPCS[q.npc], q.intro, `NEW QUEST: ${q.title}`, () => {
+      this.save.quest.intro = true;
+      this.persist();
+      this.input.lock();
+      this.checkQuest();
+    });
+  }
+
+  /** Completes the active quest if its goal is met, then plays the outro and the next intro. */
+  private checkQuest() {
+    if (this.ui.modal !== 'none') return;
+    const done = completeQuest(this.save);
+    if (!done) { this.ui.quest(this.questInfo()); return; }
+    this.audio.newSpecies();
+    this.audio.cash();
+    this.applyCosmetics();
+    this.refreshHud();
+    this.persist();
+    const reward = `+${formatMoney(done.reward.money)}  +${done.reward.pearls} pearls${done.reward.cosmetic ? '  + new pet!' : ''}`;
+    this.unlockForUI();
+    this.ui.dialog(NPCS[done.npc], done.outro, `QUEST COMPLETE: ${done.title}  ${reward}`, () => {
+      this.input.lock();
+      this.celebrate(checkAchievements(this.save));
+      if (!currentQuest(this.save)) this.ending();
+      else setTimeout(() => this.questIntro(), 600);
+    });
+  }
+
+  private questInfo() {
+    const q = currentQuest(this.save);
+    if (!q) return null;
+    const st = questStatus(this.save);
+    return { title: q.title, npc: NPCS[q.npc], value: st.value, goal: st.goal, step: this.save.quest.index + 1, total: QUESTS.length, money: q.goal.kind === 'sell' };
+  }
+
+  private ending() {
+    this.fireworks = 12;
+    this.audio.legendary();
+    this.unlockForUI();
+    this.ui.ending(this.save, () => this.input.lock());
   }
 
   private applySettings() {
@@ -154,6 +216,7 @@ export class Game {
       this.boat.flagInst.b.set([y[0], y[1], y[2], flag.pattern ?? 0]);
       this.boat.flagInst.c.set([z[0], z[1], z[2], 1]);
     }
+    this.boat.pet = cosmeticById.get(eq.pet)?.mesh ?? '';
     const lure = cosmeticById.get(eq.lure);
     if (lure && lure.id !== 'lure-default' && lure.colors) this.fishing.lureLook = { colors: lure.colors, pattern: lure.pattern ?? 0, glow: lure.glow ?? 0 };
     else {
@@ -233,6 +296,7 @@ export class Game {
       sell: () => {
         const n = this.save.cooler.length;
         const v = sellAll(this.save);
+        questEvent(this.save, { sold: v });
         if (n) { this.audio.cash(); this.ui.toast(`+${formatMoney(v)}`, '#7fff8a', true, `Sold ${n} fish`); }
         if (this.save.tutorial === 2) this.save.tutorial = 3;
         this.celebrate(checkAchievements(this.save));
@@ -323,12 +387,18 @@ export class Game {
     this.ui.closeShop();
     this.audio.setMood(MOOD[this.zone.id]);
     this.input.lock();
+    this.checkQuest();
   }
 
   // ------------------------------------------------------------------ main loop
   frame(now: number) {
-    const dt = this.lastTime ? clamp((now - this.lastTime) / 1000, 0, 0.05) : 0.016;
+    const realDt = this.lastTime ? clamp((now - this.lastTime) / 1000, 0, 0.05) : 0.016;
     this.lastTime = now;
+    // slow motion on big bites
+    this.slowmo = Math.max(0, this.slowmo - realDt);
+    this.timeScale = damp(this.timeScale, this.slowmo > 0 ? 0.3 : 1, 8, realDt);
+    const dt = realDt * this.timeScale;
+    if (this.fireworks > 0) this.fireworksFx(realDt);
     const inp = this.input;
     this.fpsAcc.t += dt; this.fpsAcc.n++;
     if (this.fpsAcc.t > 0.5) { this.fpsAcc.fps = this.fpsAcc.n / this.fpsAcc.t; this.fpsAcc.t = 0; this.fpsAcc.n = 0; }
@@ -338,6 +408,7 @@ export class Game {
         this.save.stats.playTime += dt;
         this.update(dt);
       } else {
+        if (this.ui.modal === 'dialog' && inp.hit('Space', 'Enter', 'KeyE', 'Mouse0')) this.ui.advanceDialog();
         if (this.ui.modal === 'shop' && inp.hit('KeyE', 'Escape')) this.closeShop();
         else if (this.ui.modal === 'map' && inp.hit('KeyM', 'Escape')) this.ui.closeMap();
         this.time += dt * 0.3;
@@ -345,10 +416,11 @@ export class Game {
       }
     } else {
       this.time += dt;
+      this.attractMode(dt);
       this.passiveUpdate(dt);
-      this.cam.yaw += dt * 0.05;
     }
     this.draw(dt);
+    if (this.captureNext) { this.captureNext = false; this.savePhoto(); }
     this.ui.fps(this.save.settings.fps ? this.fpsAcc.fps : null);
     inp.endFrame();
   }
@@ -369,28 +441,64 @@ export class Game {
       this.cam.pitch = damp(this.cam.pitch, 0.12, 3, dt);
       this.cam.distTarget = 22;
       this.cam.waterSide = 1;
-    } else if (!this.playing) {
-      this.cam.desired.set(this.boat.pos.x, 3, this.boat.pos.z);
-      this.cam.distTarget = 20;
     }
-    this.cam.update(dt, this.water, heightAt);
+    this.cam.update(dt, this.water, heightAt, !this.playing && this.attract.t < 0.05);
     this.fx.update(dt, this.water);
     this.spots.update(dt, this.time, this.cam.pos, this.fx);
     this.aquarium.update(dt);
     this.audio.update(dt, { throttle: 0, speed: 0, underwater: this.camUnder ? 1 : 0, reeling: 0, rain: this.tw.rain });
   }
 
+  /** Title screen: a slow scenic tour of the world's landmarks. */
+  private attractMode(dt: number) {
+    const VIEWS: [number, number, number, number, number, number][] = [
+      // x, y, z of the target, yaw, pitch, distance
+      [-9, 3, 91, 0.9, 0.22, 20],
+      [-1030, 90, 150, 1.8, 0.05, 520],
+      [1450, 18, -900, 0.4, 0.08, 150],
+      [this.scenery.ghost.pos.x, 8, this.scenery.ghost.pos.z, 2.2, 0.1, 70],
+      [-500, 20, -2000, 2.9, 0.06, 160],
+      [2100, 120, 1950, 3.6, 0.1, 400],
+      [1900, 20, 250, 5.2, 0.12, 180],
+    ];
+    const a = this.attract;
+    a.t += dt;
+    if (a.t > 9) { a.t = 0; a.i = (a.i + 1) % VIEWS.length; }
+    const [x, y, z, yaw, pitch, dist] = VIEWS[a.i];
+    const fade = a.t < 0.6 ? 1 - a.t / 0.6 : a.t > 8.4 ? (a.t - 8.4) / 0.6 : 0;
+    this.r.post.fade = [0.02, 0.04, 0.1, clamp(fade, 0, 1)];
+    this.cam.desired.set(x, y, z);
+    this.cam.yaw = yaw + a.t * 0.03;
+    this.cam.pitch = pitch;
+    this.cam.distTarget = dist;
+    this.cam.waterSide = 1;
+    if (a.t < 0.05) { this.cam.target.set(x, y, z); this.cam.dist = dist; }
+    // keep the day bright for the tour
+    if (this.tw.night > 0.5) this.tw.dayTime = 0.4;
+  }
+
   private update(dt: number) {
     const inp = this.input;
     const f = this.fishing;
     const s = this.stats;
+    if (this.r.post.fade[3] > 0 && !this.travel) this.r.post.fade[3] = Math.max(0, this.r.post.fade[3] - dt * 2);
+    if (inp.hit('KeyF')) this.togglePhoto();
+    if (this.photo) {
+      this.lookInput(dt);
+      if (inp.hit('Enter')) this.captureNext = true;
+      if (inp.hit('Escape')) this.togglePhoto();
+      this.cam.distTarget = clamp(this.cam.distTarget + inp.zoom * 2, 3, 120);
+      this.cam.update(dt, this.water, heightAt);
+      this.fx.update(dt, this.water);
+      return;
+    }
     this.lookInput(dt);
     if (inp.hit('Escape', 'KeyP') && !inp.locked && f.state !== 'aim') { this.openPause(); return; }
     if (inp.hit('KeyM')) {
       const range = this.effects.sonarUntil > this.time ? 99999 : [0, 400, 1400, 99999][s.finder];
       this.ui.openMap(this.boat.pos.x, this.boat.pos.z, this.boat.heading, s.hull,
         this.spots.spots.filter((h) => h.pos.distanceXZ(this.boat.pos) < range).map((h) => ({ x: h.pos.x, z: h.pos.z })), this.save.seenZones,
-        this.scenery.outposts.filter((o) => this.save.outposts.includes(o.zone)).map((o) => ({ x: o.pos.x, z: o.pos.z, name: o.name })));
+        this.scenery.outposts.filter((o) => this.save.outposts.includes(o.zone)).map((o) => ({ x: o.pos.x, z: o.pos.z, name: o.name })), this.mapMarkers());
       return;
     }
     if (inp.hit('KeyH')) this.audio.horn();
@@ -452,6 +560,7 @@ export class Game {
     this.boat.anchored = f.state !== 'idle';
     const boost = this.effects.energyUntil > this.time ? 1.25 : 1;
     this.boat.update(dt, this.time, s.boatSpeed * boost, this.r.frame.waveScale, () => { this.audio.thud(); this.cam.shake(0.6); });
+    this.resolveCollisions(dt);
     this.boat.rodBend = damp(this.boat.rodBend, f.state === 'under' ? 0.15 + f.tension * 0.9 + f.hooked.length * 0.05 : 0.12, 6, dt);
 
     // ---- fishing
@@ -468,6 +577,10 @@ export class Game {
     }
     this.life.update(dt, this.time, this.boat, this.zone.id, this.r.frame.waveScale, this.fx, this.audio);
     this.aquarium.update(dt);
+    this.updateWorldEvents(dt);
+    this.updateTreasureMap();
+    this.questCheckT -= dt;
+    if (this.questCheckT <= 0) { this.questCheckT = 1; this.checkQuest(); }
 
     // ---- camera
     this.updateCamera(dt);
@@ -483,6 +596,145 @@ export class Game {
 
     this.audio.update(dt, { throttle: this.boat.throttle, speed: this.boat.speed, underwater: this.camUnder ? 1 : 0, reeling: f.state === 'under' && f.reeling ? 1 : 0, rain: this.tw.rain });
     if (this.time - this.lastSave > 10) { this.lastSave = this.time; this.persist(); this.refreshHud(); }
+  }
+
+  /** Special minimap/map markers: treasure X and world events. */
+  private mapMarkers() {
+    const out: { x: number; z: number; kind: 'x' | 'star' }[] = [];
+    if (this.save.treasureMap) out.push({ x: this.save.treasureMap.x, z: this.save.treasureMap.z, kind: 'x' });
+    const e = this.events.active;
+    if (e?.kind === 'frenzy') out.push({ x: e.pos.x, z: e.pos.z, kind: 'star' });
+    return out;
+  }
+
+  private updateWorldEvents(dt: number) {
+    const started = this.events.update(dt, this.time, this.boat.pos, this.stats.hull, this.tw.isNight, this.fx);
+    if (started) {
+      const info = EVENT_INFO[started.kind];
+      this.save.stats.events++;
+      this.ui.banner(started.zone ? started.zone.name : 'Event', info.title, info.sub, false, 5000);
+      this.audio.zone();
+      if (started.kind === 'golden') this.r.post.flash = [1, 0.85, 0.3, 0.3];
+    }
+    const got = this.events.collect(this.boat.pos);
+    if (got > 0) {
+      this.save.pearls += got;
+      this.save.stats.fragments += got;
+      this.audio.treasure();
+      this.fx.burst(this.boat.pos.clone().add(new Vec3(0, 2, 0)), [0.7, 0.8, 1], 30, 5, 0.3);
+      this.ui.toast('STAR FRAGMENT!', '#a0c0ff', false, `+${got} pearl${got > 1 ? 's' : ''}`);
+      this.refreshHud();
+    }
+  }
+
+  /** Treasure maps from bottles: dive the lure down at the X to dig up the loot. */
+  private updateTreasureMap() {
+    const m = this.save.treasureMap;
+    const f = this.fishing;
+    if (!m || f.state !== 'under') return;
+    if (Math.hypot(f.lure.x - m.x, f.lure.z - m.z) > 12) return;
+    if (f.lure.y > heightAt(f.lure.x, f.lure.z) + 6) return;
+    const lvl = ZONES.find((z) => z.id === m.zone)?.level ?? 0;
+    const money = LEVEL_VALUE[lvl] * 60;
+    this.save.treasureMap = null;
+    this.save.money += money;
+    this.save.stats.earned += money;
+    this.save.pearls += 5;
+    this.save.stats.maps++;
+    this.audio.treasure();
+    this.audio.legendary();
+    this.fx.burst(f.lure.clone(), [1, 0.85, 0.3], 80, 8, 0.4);
+    this.ui.banner('X MARKS THE SPOT', `+${formatMoney(money)}`, 'You dug up the buried treasure! +5 pearls', false, 4500);
+    this.celebrate(checkAchievements(this.save));
+    this.refreshHud();
+    this.persist();
+  }
+
+  private makeTreasureMap() {
+    const open = ZONES.filter((z) => z.hull <= this.stats.hull && z.floorDepth <= this.stats.lineLength * 1.5);
+    const r = this.contractRand;
+    for (let t = 0; t < 80; t++) {
+      const zone = open[Math.floor(r() * open.length)];
+      if (!zone) return;
+      const a = r() * Math.PI * 2, d = Math.sqrt(r()) * zone.radius * 0.8;
+      const x = zone.x + Math.cos(a) * d, z = zone.z + Math.sin(a) * d;
+      const h = heightAt(x, z);
+      if (h < -8 && -h < this.stats.lineLength * 0.85) {
+        this.save.treasureMap = { x, z, zone: zone.id };
+        this.ui.toast('TREASURE MAP!', '#ffd23a', true, `An X is marked in ${zone.name}. Dive your lure to the bottom there.`);
+        return;
+      }
+    }
+  }
+
+  /** Keeps the boat out of piers, outposts and other boats. */
+  private resolveCollisions(dt: number) {
+    const b = this.boat;
+    const fw = b.forward;
+    const hull = [b.pos.clone().addScaled(fw, 2.2), b.pos.clone(), b.pos.clone().addScaled(fw, -2.2)];
+    const obstacles: [number, number, number][] = [];
+    for (let z = 55; z <= 88; z += 3) obstacles.push([0, z, 2.4]);
+    for (let x = -4.5; x <= 4.5; x += 3) obstacles.push([x, 91, 3.2]);
+    for (const o of this.scenery.outposts) obstacles.push([o.pos.x, o.pos.z, 7.5]);
+    for (const n of this.life.npcs) { obstacles.push([n.boat.pos.x + n.boat.forward.x * 2, n.boat.pos.z + n.boat.forward.z * 2, 1.8]); obstacles.push([n.boat.pos.x - n.boat.forward.x * 2, n.boat.pos.z - n.boat.forward.z * 2, 1.8]); }
+    const g = this.scenery.ghost.pos;
+    for (let k = -2; k <= 2; k++) {
+      const hd = this.scenery.ghost.heading;
+      obstacles.push([g.x + Math.sin(hd) * k * 5, g.z + Math.cos(hd) * k * 5, 4.5]);
+    }
+    let hit = false;
+    for (const p of hull) {
+      for (const [ox, oz, orad] of obstacles) {
+        const dx = p.x - ox, dz = p.z - oz;
+        const d = Math.hypot(dx, dz), min = orad + 1.5;
+        if (d < min && d > 0.001) {
+          const push = (min - d);
+          b.pos.x += (dx / d) * push;
+          b.pos.z += (dz / d) * push;
+          hit = true;
+        }
+      }
+    }
+    if (hit) {
+      if (Math.abs(b.speed) > 4 && b.bumped <= 0) { this.audio.thud(); this.cam.shake(0.4); b.bumped = 0.6; }
+      b.speed *= Math.exp(-dt * 6);
+    }
+    // friendly honks from passing boats
+    if (this.time - this.lastHonk > 25) {
+      for (const n of this.life.npcs) {
+        if (n.boat.pos.distanceXZ(b.pos) < 28 && Math.abs(n.boat.speed) > 3) { this.lastHonk = this.time; this.audio.horn(0.35); break; }
+      }
+    }
+  }
+
+  private togglePhoto() {
+    this.photo = !this.photo;
+    this.ui.photo(this.photo);
+    this.audio.click();
+    if (this.photo) this.cam.distTarget = Math.max(this.cam.distTarget, 14);
+  }
+
+  private savePhoto() {
+    this.canvas.toBlob((blob) => {
+      if (!blob) return;
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = `fishing-simulator-2028-${Date.now()}.png`;
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+      this.ui.toast('Picture saved!', '#fff');
+      this.audio.coin();
+    }, 'image/png');
+  }
+
+  private fireworksFx(dt: number) {
+    this.fireworks -= dt;
+    if (Math.random() < dt * 3) {
+      const p = this.boat.pos.clone().add(new Vec3(this.fx.rnd() * 60, 25 + Math.random() * 25, this.fx.rnd() * 60));
+      const cols: [number, number, number][] = [[1, 0.4, 0.3], [0.4, 1, 0.5], [0.4, 0.6, 1], [1, 0.9, 0.3], [1, 0.4, 1]];
+      this.fx.burst(p, cols[Math.floor(Math.random() * cols.length)], 60, 12, 0.5);
+      this.audio.splash(0.3);
+    }
   }
 
   private useItem(id: ItemId) {
@@ -530,7 +782,9 @@ export class Game {
       move: under ? { x: (inp.down('KeyD') ? 1 : 0) - (inp.down('KeyA') ? 1 : 0), z: (inp.down('KeyW') ? 1 : 0) - (inp.down('KeyS') ? 1 : 0) } : { x: 0, z: 0 },
       dive: under && inp.down('Mouse2', 'ShiftLeft', 'ShiftRight'),
       reel: under && inp.down('Mouse0', 'Space'),
-      hotspot: this.spots.strengthAt(this.fishing.lure.x, this.fishing.lure.z),
+      hotspot: Math.max(this.spots.strengthAt(this.fishing.lure.x, this.fishing.lure.z), this.events.frenzyAt(this.fishing.lure.x, this.fishing.lure.z)),
+      rareBoost: this.events.golden ? 2.5 : 1,
+      mastered: this.mastered,
       chests: this.scenery.chests,
       night: this.tw.isNight,
       weather: this.tw.effective(),
@@ -562,6 +816,12 @@ export class Game {
           this.ui.toast('Too shallow!', '#ffb0a0', false, 'Cast into deeper water');
           this.audio.warn();
           break;
+        case 'perfect':
+          this.save.stats.perfect++;
+          this.ui.toast('PERFECT CAST!', '#7fff8a', true, 'Rare fish are drawn to your lure');
+          this.audio.coin();
+          this.fx.burst(this.boat.rodTip.clone(), [0.6, 1, 0.6], 24, 4, 0.25);
+          break;
         case 'boss':
           this.save.bossBait = false;
           this.castBoss = false;
@@ -578,8 +838,9 @@ export class Game {
           this.fx.burst(e.fish.pos, [1, 0.9, 0.4], 18, 3, 0.25);
           const sc = this.screenPos(e.fish.pos);
           this.ui.floater(sc.x, sc.y - 30, sp.name, RARITY_COLOR[sp.rarity]);
-          if (sp.rarity === 'legendary') { this.ui.toast('LEGENDARY!', '#ffb020', true, sp.name); this.audio.legendary(); this.cam.shake(0.8); }
-          if (sp.boss) { this.ui.toast('HOOKED THE BOSS!', '#ff5a4a', true, 'Counter its pulls with A / D!'); this.cam.shake(1.2); }
+          this.boat.petBounce = 0.5;
+          if (sp.rarity === 'legendary') { this.ui.toast('LEGENDARY!', '#ffb020', true, sp.name); this.audio.legendary(); this.cam.shake(0.8); this.slowmo = 0.9; }
+          if (sp.boss) { this.ui.toast('HOOKED THE BOSS!', '#ff5a4a', true, 'Counter its pulls with A / D!'); this.cam.shake(1.2); this.slowmo = 1.1; }
           else if (e.fish.kg > this.stats.lineStrength * 0.5 && !this.save.achievements.includes('fighttip')) {
             this.ui.toast('Big one!', '#fff', false, 'Steer AGAINST its pull with A / D and pulse the reel');
             this.save.achievements.push('fighttip');
@@ -684,7 +945,12 @@ export class Game {
         this.pendingLand = null;
         const ctx = { zone: pl.zone, depth: pl.maxDepth, night: this.tw.isNight, weather: this.tw.effective() };
         const res = landCatch(this.save, pl.catches, this.stats.cooler, ctx);
-        const done = progressContracts(this.save, res.kept.concat(res.released), { zone: pl.zone, maxDepth: pl.maxDepth, night: ctx.night, weather: ctx.weather });
+        const cast = { zone: pl.zone, maxDepth: pl.maxDepth, night: ctx.night, weather: ctx.weather };
+        const done = progressContracts(this.save, res.kept.concat(res.released), cast);
+        questEvent(this.save, { catches: res.kept.concat(res.released), cast });
+        if (pl.catches.some((c) => c.id === 'bottle') && !this.save.treasureMap && Math.random() < 0.6) this.makeTreasureMap();
+        this.mastered = masteredZones(this.save);
+        this.boat.petBounce = 1;
         fillContracts(this.save, this.contractRand, this.stats.lineLength, this.stats.hooks);
         if (res.newSpecies.length) this.audio.newSpecies();
         for (const id of res.newSpecies) this.ui.toast('NEW SPECIES!', '#7fe0ff', true, speciesById.get(id)!.name);
@@ -697,7 +963,7 @@ export class Game {
         this.persist();
         if (res.kept.length + res.released.length > 0) {
           this.unlockForUI();
-          this.ui.showCatch(res, coolerValue(this.save), () => this.input.lock());
+          this.ui.showCatch(res, coolerValue(this.save), () => { this.input.lock(); this.checkQuest(); });
         } else this.ui.toast('Nothing this time...', '#fff', false, 'Steer the lure into fish!');
       }
     }
@@ -900,7 +1166,9 @@ export class Game {
     const range = this.effects.sonarUntil > this.time ? 99999 : [0, 400, 1400, 99999][s.finder];
     ui.drawMinimap(this.boat.pos.x, this.boat.pos.z, this.boat.heading,
       this.spots.spots.filter((h) => h.pos.distanceXZ(this.boat.pos) < range).map((h) => ({ x: h.pos.x, z: h.pos.z })),
-      [{ x: this.scenery.dockSpot.x, z: this.scenery.dockSpot.z }, ...this.scenery.outposts.filter((o) => this.save.outposts.includes(o.zone)).map((o) => ({ x: o.dock.x, z: o.dock.z }))]);
+      [{ x: this.scenery.dockSpot.x, z: this.scenery.dockSpot.z }, ...this.scenery.outposts.filter((o) => this.save.outposts.includes(o.zone)).map((o) => ({ x: o.dock.x, z: o.dock.z }))],
+      this.mapMarkers());
+    if ((this.time | 0) !== ((this.time - 0.02) | 0)) ui.quest(this.questInfo());
     // sonar
     this.sonarT -= 1;
     const finder = Math.max(s.finder, this.effects.sonarUntil > this.time ? 3 : 0);
@@ -985,6 +1253,16 @@ export class Game {
     }
     for (const fl of this.flyers) if (fl.t >= 0) drawFish(fl.actor);
     for (const d of this.debugActors) drawFish(d);
+    this.events.draw(r, this.time);
+    const tm = this.save.treasureMap;
+    if (tm) {
+      const d = Math.hypot(tm.x - c.pos.x, tm.z - c.pos.z);
+      if (!this.camUnder && d < 1500) ribbon(r, new Vec3(tm.x, 0, tm.z), new Vec3(tm.x, 60, tm.z), c.pos, 3, [1.2, 0.3, 0.2], 0, 0.5);
+      if (this.camUnder && d < 120) {
+        const fy = heightAt(tm.x, tm.z);
+        r.particle(tm.x, fy + 1.5, tm.z, 3 + Math.sin(this.time * 4) * 0.5, 1.4, 0.4, 0.2, 0, 3, this.time);
+      }
+    }
     if (f.state === 'under' && this.stats.lampRadius > 0) r.particle(f.lure.x, f.lure.y + 0.35, f.lure.z, 0.45 + Math.sin(this.time * 6) * 0.05, 0.8, 0.7, 0.45, 0, 3, this.time * 0.5);
     this.drawSkyEffects();
     this.fx.draw(r);
@@ -995,7 +1273,7 @@ export class Game {
     p.vignette = 0.3 + this.underwater * 0.35 + clamp(camDepth / 300, 0, 0.3) + (f.fighting ? f.tension * 0.3 : 0);
     p.flash[3] = Math.max(0, p.flash[3] - dt * 1.5);
     p.bloom = 0.5 + this.env.lavaStrength * 0.05 + this.env.voidAmount * 0.2 + fr.night * 0.25;
-    p.saturation = 1.12 - this.env.eerie * 0.2 - this.tw.storm * 0.15;
+    p.saturation = 1.12 - this.env.eerie * 0.2 - this.tw.storm * 0.15 + (this.events.golden ? 0.25 : 0);
     r.render({ ocean: true });
   }
 

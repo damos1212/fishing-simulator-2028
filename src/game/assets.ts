@@ -7,7 +7,7 @@ const ARCHETYPES: Archetype[] = ['slim', 'tall', 'round', 'eel', 'shark', 'ray',
   'crab', 'lobster', 'turtle', 'octopus', 'seahorse', 'starfish', 'serpent', 'dolphin', 'boot', 'bottle', 'duck'];
 const MODELS = ['boat', 'fisher', 'lure', 'pier', 'shop', 'lighthouse', 'rock', 'coral', 'iceberg', 'pillar', 'tentacle', 'crystal', 'gull', 'chest',
   'shipwreck', 'ghostship', 'skullrock', 'barrel', 'factory', 'lollipop', 'candycane', 'gumdrop', 'icecream', 'dome', 'statue', 'arch', 'spire',
-  'outpost', 'aquarium', 'shell', 'anchor', 'hats'] as const;
+  'outpost', 'aquarium', 'shell', 'anchor', 'hats', 'pets'] as const;
 export type ModelName = (typeof MODELS)[number];
 
 export interface Assets {

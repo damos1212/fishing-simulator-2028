@@ -4,7 +4,8 @@ import { COSMETICS, type CosmeticKind, ITEMS, type ItemId } from '../data/items'
 import { TRACKS, type TrackId } from '../data/upgrades';
 import { ALL_ZONES, ZONES } from '../data/zones';
 import { clamp } from '../engine/math';
-import { coolerValue, DEX_TOTAL, formatMoney, type LandResult, nextTier, type SaveData } from '../game/economy';
+import { type Npc, NPCS, QUESTS } from '../data/quests';
+import { coolerValue, DEX_TOTAL, formatMoney, type LandResult, masteredZones, nextTier, type SaveData } from '../game/economy';
 import { ACHIEVEMENTS, type Contract, contractGoal } from '../game/progress';
 import { heightAt, WORLD_R } from '../world/terrain';
 import { WEATHER_LABEL } from '../world/timeweather';
@@ -24,6 +25,9 @@ const HAT_ICON: Record<string, string> = {
   'hat-top': '&#127913;', 'hat-viking': '&#9876;', 'hat-wizard': '&#10024;', 'hat-fish': '&#128031;', 'hat-crown': '&#128081;',
 };
 const WEATHER_ICON: Record<WeatherKind, string> = { clear: '&#9728;', cloudy: '&#9729;', rain: '&#9730;', storm: '&#9889;', fog: '&#8776;' };
+
+export interface QuestInfo { title: string; npc: Npc; value: number; goal: number; step: number; total: number; money: boolean }
+export interface MapMarker { x: number; z: number; kind: 'x' | 'star' }
 
 export interface Destination { name: string; zone: string; cost: number; here: boolean }
 
@@ -60,7 +64,8 @@ export class UI {
   private shopTab: ShopTab = 'sell';
   private styleKind: CosmeticKind = 'hat';
   private dexZone = 'all';
-  modal: 'none' | 'catch' | 'shop' | 'map' | 'pause' | 'title' = 'title';
+  modal: 'none' | 'catch' | 'shop' | 'map' | 'pause' | 'title' | 'dialog' | 'ending' = 'title';
+  private dlg: { lines: string[]; i: number; shown: number; timer: number; done: () => void } | null = null;
   onClick: () => void = () => {};
 
   constructor(private root: HTMLElement) {
@@ -68,7 +73,7 @@ export class UI {
       <div id="money" class="chip"><div class="coin">$</div><span>$0</span></div>
       <div id="pearls" class="chip"><div class="pearl"></div><span>0</span></div>
       <div id="cooler" class="chip"><span>Cooler 0/6</span></div>
-      <div id="contracts"></div>
+      <div id="leftcol"><div id="quest" class="hidden"></div><div id="contracts"></div></div>
       <div id="zoneName" class="chip"><span></span></div>
       <div id="clock" class="chip"><span class="w"></span><span class="t">06:00</span></div>
       <div id="minimap"><canvas width="380" height="380"></canvas></div>
@@ -77,7 +82,7 @@ export class UI {
       <div id="toasts"></div>
       <div id="tutorial" class="hidden"></div>
       <div id="prompt" class="display outlined"></div>
-      <div id="power" class="hidden"><i></i><b>POWER</b></div>
+      <div id="power" class="hidden"><s></s><i></i><b>POWER</b></div>
       <div id="depth" class="hidden"><div class="cap display outlined">DEPTH</div><div class="bar"><div class="lim"></div><div class="pin"></div></div><div class="val display outlined">0m</div></div>
       <div id="hooks" class="hidden"></div>
       <div id="tension" class="hidden"><div class="label display outlined">FIGHT!</div><div class="pull display outlined"></div><div class="track"><div class="needle"></div></div><div class="stam"><i></i></div></div>
@@ -85,10 +90,11 @@ export class UI {
       <div id="items"></div>
       <div id="legend" class="hidden"><div class="arrow">&#9650;</div></div>
       <div id="fps" class="hidden"></div>
+      <div id="photohint" class="hidden display outlined">PHOTO MODE<small><kbd>Enter</kbd> save picture &middot; <kbd>F</kbd> / <kbd>Esc</kbd> exit &middot; mouse to orbit, pinch/scroll to zoom</small></div>
     </div>`);
     root.appendChild(hud);
     for (const id of ['hud', 'money', 'pearls', 'cooler', 'contracts', 'zoneName', 'clock', 'minimap', 'bossbar', 'banner', 'toasts', 'tutorial', 'prompt', 'power', 'depth',
-      'hooks', 'tension', 'sonar', 'items', 'legend', 'fps']) {
+      'hooks', 'tension', 'sonar', 'items', 'legend', 'fps', 'quest', 'photohint']) {
       this.el[id] = hud.id === id ? hud : hud.querySelector('#' + id)!;
     }
     this.mini = (this.el.minimap.querySelector('canvas') as HTMLCanvasElement).getContext('2d')!;
@@ -252,6 +258,95 @@ export class UI {
     }).join('');
     if (this.el.contracts.innerHTML !== html) this.el.contracts.innerHTML = html;
   }
+  quest(q: QuestInfo | null) {
+    const el = this.el.quest;
+    el.classList.toggle('hidden', !q);
+    if (!q) return;
+    const v = Math.min(q.value, q.goal);
+    const count = q.money ? `${formatMoney(v)} / ${formatMoney(q.goal)}` : q.goal > 1 ? `${v} / ${q.goal}` : v >= q.goal ? 'Done!' : '';
+    const html = `<div class="qh"><span class="face" style="background:${q.npc.color}">${q.npc.face}</span><span class="display">STORY ${q.step}/${q.total}</span></div>
+      <div class="qt">${esc(q.title)}</div>${q.goal > 1 ? `<div class="cp"><i style="width:${(v / q.goal) * 100}%"></i></div>` : ''}<small>${count}${count ? ' &middot; ' : ''}${esc(q.npc.name)}</small>`;
+    if (el.innerHTML !== html) el.innerHTML = html;
+  }
+  photo(on: boolean) {
+    this.el.hud.classList.toggle('photo', on);
+    this.el.photohint.classList.toggle('hidden', !on);
+  }
+
+  // ------------------------------------------------------------------ story dialog
+  dialog(npc: Npc, lines: string[], header: string, onDone: () => void) {
+    this.closeDialog();
+    const m = h(`<div id="dialog" class="modal"><div class="panel">
+      <div class="portrait" style="background:radial-gradient(circle at 35% 30%, #fff8 0, transparent 45%), ${npc.color}">${npc.face}</div>
+      <div class="body"><div class="hdr display">${esc(header)}</div>
+        <div class="who"><b class="display">${esc(npc.name)}</b> <small>${esc(npc.title)}</small></div>
+        <div class="text"></div>
+        <div class="next display">Click / Space &#9654;</div></div></div></div>`);
+    this.root.appendChild(m);
+    this.el.dialog = m;
+    this.modal = 'dialog';
+    this.dlg = { lines: lines.length ? lines : ['...'], i: 0, shown: 0, timer: 0, done: onDone };
+    m.addEventListener('click', () => this.advanceDialog());
+    this.typeLine();
+  }
+  private typeLine() {
+    const d = this.dlg;
+    if (!d) return;
+    const text = this.el.dialog.querySelector('.text') as HTMLElement;
+    const line = d.lines[d.i];
+    clearInterval(d.timer);
+    d.shown = 0;
+    this.el.dialog.classList.remove('ready');
+    d.timer = window.setInterval(() => {
+      d.shown = Math.min(line.length, d.shown + 2);
+      text.textContent = line.slice(0, d.shown);
+      if (d.shown % 6 === 0) this.onClick();
+      if (d.shown >= line.length) { clearInterval(d.timer); this.el.dialog?.classList.add('ready'); }
+    }, 28);
+  }
+  /** Finishes the current line, or moves to the next one, or closes the dialog. */
+  advanceDialog() {
+    const d = this.dlg;
+    if (!d) return;
+    const line = d.lines[d.i];
+    if (d.shown < line.length) {
+      clearInterval(d.timer);
+      d.shown = line.length;
+      (this.el.dialog.querySelector('.text') as HTMLElement).textContent = line;
+      this.el.dialog.classList.add('ready');
+      return;
+    }
+    if (++d.i < d.lines.length) { this.typeLine(); return; }
+    const done = d.done;
+    this.closeDialog();
+    done();
+  }
+  private closeDialog() {
+    if (this.dlg) clearInterval(this.dlg.timer);
+    this.dlg = null;
+    this.el.dialog?.remove();
+    delete this.el.dialog;
+    if (this.modal === 'dialog') this.modal = 'none';
+  }
+
+  // ------------------------------------------------------------------ ending
+  ending(save: SaveData, onClose: () => void) {
+    const mins = Math.round(save.stats.playTime / 60);
+    const m = h(`<div id="ending" class="modal"><div class="panel">
+      <div class="big display outlined">THE END?</div>
+      <p>The Stranger is gone, The Void is quiet, and every fish in the sea knows your name.<br>Marta says the coffee's on her. Forever.</p>
+      <div class="cast">${Object.values(NPCS).map((n) => `<span style="background:${n.color}" title="${esc(n.name)}">${n.face}</span>`).join('')}</div>
+      <div class="stats">Fish caught <b>${save.stats.caught}</b> &middot; Species logged <b>${Object.keys(save.dex).length}/${DEX_TOTAL}</b>
+        &middot; Bosses <b>${save.bosses.length}</b> &middot; Deepest <b>${Math.round(save.stats.deepest)}m</b><br>
+        Earned <b>${formatMoney(save.stats.earned)}</b> &middot; Achievements <b>${save.achievements.length}/${ACHIEVEMENTS.length}</b> &middot; Time <b>${mins} min</b></div>
+      <p><small>The sea is still full of records to break, trophies to win and contracts to finish.</small></p>
+      <button class="btn green">KEEP FISHING</button></div></div>`);
+    this.root.appendChild(m);
+    this.el.ending = m;
+    this.modal = 'ending';
+    m.querySelector('.btn')!.addEventListener('click', () => { m.remove(); delete this.el.ending; this.modal = 'none'; onClose(); });
+  }
+
   contractDone(c: Contract) {
     this.toast('CONTRACT COMPLETE!', '#7fff8a', true, `${c.title}: +${formatMoney(c.money)} +${c.pearls} pearls`);
   }
@@ -317,7 +412,7 @@ export class UI {
     this.mapImage = cv;
   }
 
-  drawMinimap(bx: number, bz: number, heading: number, spots: { x: number; z: number }[], docks: { x: number; z: number }[]) {
+  drawMinimap(bx: number, bz: number, heading: number, spots: { x: number; z: number }[], docks: { x: number; z: number }[], markers: MapMarker[] = []) {
     if (!this.mapImage) this.buildMapImage();
     const c = this.mini, S = 380, range = 480;
     const img = this.mapImage!;
@@ -346,6 +441,10 @@ export class UI {
       c.beginPath(); c.arc(ddx, ddy, 13, 0, Math.PI * 2); c.fill(); c.stroke();
       c.fillStyle = '#1b1530'; c.font = '18px Lilita One'; c.textAlign = 'center'; c.textBaseline = 'middle'; c.fillText(i === 0 ? '$' : 'O', ddx, ddy + 1);
     });
+    for (const m of markers) {
+      const [mx, my] = toS(m.x, m.z);
+      drawMarker(c, clamp(mx, 22, S - 22), clamp(my, 22, S - 22), m.kind, 1);
+    }
     c.save();
     c.translate(S / 2, S / 2);
     c.rotate(Math.PI - heading);
@@ -356,10 +455,10 @@ export class UI {
     c.strokeText('N', S / 2, 30); c.fillText('N', S / 2, 30);
   }
 
-  openMap(bx: number, bz: number, heading: number, hull: number, spots: { x: number; z: number }[], seen: string[], outposts: { x: number; z: number; name: string }[] = []) {
+  openMap(bx: number, bz: number, heading: number, hull: number, spots: { x: number; z: number }[], seen: string[], outposts: { x: number; z: number; name: string }[] = [], markers: MapMarker[] = []) {
     if (!this.mapImage) this.buildMapImage();
     const m = h(`<div id="map" class="modal"><div class="panel"><h2>Sea Chart</h2><canvas width="1000" height="1000"></canvas>
-      <div style="text-align:center;margin-top:8px;font-weight:900">Press M to close &middot; <span style="color:#c08a00">$</span> harbor &middot; <span style="color:#1a8ab0">O</span> outposts (fast travel)</div></div></div>`);
+      <div style="text-align:center;margin-top:8px;font-weight:900">Press M to close &middot; <span style="color:#c08a00">$</span> harbor &middot; <span style="color:#1a8ab0">O</span> outposts (fast travel) &middot; <span style="color:#d02a2a">X</span> treasure &middot; <span style="color:#c08a00">&#9733;</span> event</div></div></div>`);
     this.root.appendChild(m);
     this.el.map = m;
     this.modal = 'map';
@@ -397,6 +496,7 @@ export class UI {
       c.beginPath(); c.arc(x, y, 11, 0, Math.PI * 2); c.fill(); c.stroke();
       c.fillStyle = '#1b1530'; c.font = '16px Lilita One'; c.fillText('O', x, y + 1);
     }
+    for (const mk of markers) { const [x, y] = toS(mk.x, mk.z); drawMarker(c, x, y, mk.kind, 1.3); }
     const [hx, hy] = toS(0, 60);
     c.fillStyle = '#ffd23a'; c.beginPath(); c.arc(hx, hy, 13, 0, Math.PI * 2); c.fill(); c.stroke();
     c.fillStyle = '#1b1530'; c.font = '18px Lilita One'; c.fillText('$', hx, hy + 1);
@@ -457,7 +557,7 @@ export class UI {
       ['contracts', 'Contracts', false],
       ['supplies', 'Supplies', false],
       ...TRACKS.map((t) => { const n = nextTier(save, t.id); return [t.id, t.name, !!n && save.money >= n.cost] as [ShopTab, string, boolean]; }),
-      ['style', 'Style Shop', COSMETICS.some((c) => !save.cosmetics.owned.includes(c.id) && c.pearls <= save.pearls)],
+      ['style', 'Style Shop', COSMETICS.some((c) => !c.quest && !save.cosmetics.owned.includes(c.id) && c.pearls <= save.pearls)],
       ['travel', 'Fast Travel', false],
       ['trophies', 'Trophies', false],
       ['dex', 'Fish Log', false],
@@ -503,16 +603,20 @@ export class UI {
       }).join('');
       main.querySelectorAll('[data-item]').forEach((b) => b.addEventListener('click', () => hs.buyItem((b as HTMLElement).dataset.item as ItemId, +(b as HTMLElement).dataset.n!)));
     } else if (tab === 'style') {
-      const kinds: [CosmeticKind, string][] = [['hat', 'Hats'], ['paint', 'Boat Paint'], ['flag', 'Flags'], ['lure', 'Lure Skins'], ['line', 'Fishing Line']];
+      const kinds: [CosmeticKind, string][] = [['hat', 'Hats'], ['pet', 'Pets'], ['paint', 'Boat Paint'], ['flag', 'Flags'], ['lure', 'Lure Skins'], ['line', 'Fishing Line']];
       main.innerHTML = head('Style Shop', 'Spend pearls from contracts, achievements, treasure and bottles.') +
         `<div class="subtabs">${kinds.map(([k, n]) => `<div class="tab ${this.styleKind === k ? 'on' : ''}" data-kind="${k}">${n}</div>`).join('')}</div>
         <div class="grid">${COSMETICS.filter((c) => c.kind === this.styleKind).map((c) => {
           const owned = save.cosmetics.owned.includes(c.id);
           const eq = save.cosmetics.equipped[c.kind] === c.id;
           const sw = c.color ? `background:${c.color || '#2f5d8a'}` : c.colors ? `background:linear-gradient(135deg, ${c.colors[0]} 40%, ${c.colors[1]} 40% 70%, ${c.colors[2]} 70%)` : 'background:#ffd23a';
-          return `<div class="card ${eq ? 'eq' : ''}"><div class="sw" style="${sw}">${c.kind === 'hat' ? (HAT_ICON[c.id] ?? '&#127913;') : ''}</div><b>${esc(c.name)}</b>
-            <button class="btn small ${eq ? 'gray' : owned ? 'blue' : save.pearls >= c.pearls ? 'green' : 'gray'}" data-cos="${c.id}" ${eq ? 'disabled' : ''}>
-            ${eq ? 'EQUIPPED' : owned ? 'EQUIP' : `${c.pearls} pearls`}</button></div>`;
+          const icon = c.kind === 'hat' ? (HAT_ICON[c.id] ?? '&#127913;') : c.kind === 'pet' ? (PET_ICON[c.id] ?? '') : '';
+          const locked = c.quest && !owned;
+          const btn = locked ? `<button class="btn small gray" disabled>Story reward</button>`
+            : `<button class="btn small ${eq ? 'gray' : owned ? 'blue' : save.pearls >= c.pearls ? 'green' : 'gray'}" data-cos="${c.id}" ${eq ? 'disabled' : ''}>
+            ${eq ? 'EQUIPPED' : owned ? 'EQUIP' : `${c.pearls} pearls`}</button>`;
+          return `<div class="card ${eq ? 'eq' : ''} ${locked ? 'unknown' : ''}"><div class="sw" style="${c.kind === 'pet' ? 'background:linear-gradient(#bfe8ff,#7fc0f0)' : sw}">${icon}</div><b>${esc(locked ? '???' : c.name)}</b>
+            ${btn}</div>`;
         }).join('')}</div>`;
       main.querySelectorAll('[data-kind]').forEach((b) => b.addEventListener('click', () => { this.styleKind = (b as HTMLElement).dataset.kind as CosmeticKind; this.renderShop(save, hs); }));
       main.querySelectorAll('[data-cos]').forEach((b) => b.addEventListener('click', () => hs.buyCosmetic((b as HTMLElement).dataset.cos!)));
@@ -527,7 +631,12 @@ export class UI {
     } else if (tab === 'trophies') {
       const bosses = [...BOSS_FOR_ZONE.values()];
       main.innerHTML = head('Trophies', `${save.achievements.filter((a) => ACHIEVEMENTS.some((x) => x.id === a)).length} / ${ACHIEVEMENTS.length} achievements`) +
-        `<h4 class="display">Boss Trophies</h4><div class="grid">${bosses.map((b) => {
+        `<h4 class="display">Story</h4><div class="achlist">${QUESTS.map((q, i) => {
+          const done = i < save.quest.index, cur = i === save.quest.index, n = NPCS[q.npc];
+          return `<div class="ach ${done ? 'got' : ''}" ${cur ? 'style="opacity:1;box-shadow:0 0 0 3px var(--gold)"' : ''}><span>${done || cur ? n.face : '&#128274;'}</span>
+            <div><b>${done || cur ? esc(q.title) : '???'}</b><div>${done ? 'Complete' : cur ? `In progress - ${esc(n.name)}` : 'Locked'}</div></div></div>`;
+        }).join('')}</div>
+        <h4 class="display">Boss Trophies</h4><div class="grid">${bosses.map((b) => {
           const got = save.bosses.includes(b.id);
           const zone = ALL_ZONES.find((z) => z.id === b.zone)!.name;
           return `<div class="card ${got ? 'eq' : 'unknown'}"><div class="sw" style="background:${got ? `linear-gradient(${b.colors[0]} 50%, ${b.colors[1]} 50%)` : '#444'}"></div><b>${got ? esc(b.name) : '???'}</b><small>${esc(zone)}</small></div>`;
@@ -541,10 +650,12 @@ export class UI {
       const zones = [{ id: 'all', name: 'All' }, ...ALL_ZONES.map((z) => ({ id: z.id, name: z.name }))];
       let html = `<div class="head"><h3>Fish Log</h3><div class="chip" style="position:static">${Object.keys(save.dex).length}/${DEX_TOTAL}</div></div>
         <div class="subtabs">${zones.map((z) => `<div class="tab ${this.dexZone === z.id ? 'on' : ''}" data-dz="${z.id}">${esc(z.name)}</div>`).join('')}</div><div class="dex">`;
+      const mastered = masteredZones(save);
+      html = html.replace('<div class="dex">', `<div class="blurb">Log every regular fish in a zone to master it: its fish sell for +20%.</div><div class="dex">`);
       for (const z of ALL_ZONES) {
         if (this.dexZone !== 'all' && this.dexZone !== z.id) continue;
         const list = CATCHABLE.filter((s) => s.zone === z.id);
-        html += `<div class="zonehead">${esc(z.name)} <small>${list.filter((s) => save.dex[s.id]).length}/${list.length}</small></div>`;
+        html += `<div class="zonehead">${esc(z.name)} <small>${list.filter((s) => save.dex[s.id]).length}/${list.length}</small>${mastered.has(z.id) ? ' <span class="mastered">&#9733; MASTERED +20%</span>' : ''}</div>`;
         for (const s of list) {
           const e = save.dex[s.id];
           const cond = [s.time === 'night' ? 'night only' : '', s.weather ? `${s.weather} only` : '', s.boss ? 'BOSS: use Boss Bait' : '', s.junk ? 'junk, anywhere' : ''].filter(Boolean).join(', ');
@@ -605,6 +716,34 @@ export class UI {
     });
   }
   closePause() { this.el.pause?.remove(); this.modal = 'none'; }
+}
+
+const PET_ICON: Record<string, string> = {
+  'pet-none': '&#10060;', 'pet-crab': '&#129408;', 'pet-cat': '&#128008;', 'pet-penguin': '&#128039;', 'pet-parrot': '&#129436;', 'pet-ghost': '&#128123;', 'pet-alien': '&#128125;',
+};
+
+function drawMarker(c: CanvasRenderingContext2D, x: number, y: number, kind: MapMarker['kind'], s: number) {
+  c.save();
+  c.translate(x, y);
+  c.scale(s, s);
+  c.lineJoin = 'round';
+  if (kind === 'x') {
+    c.lineCap = 'round';
+    for (const [w, col] of [[11, '#1b1530'], [6, '#e0302a']] as const) {
+      c.lineWidth = w; c.strokeStyle = col;
+      c.beginPath(); c.moveTo(-10, -10); c.lineTo(10, 10); c.moveTo(10, -10); c.lineTo(-10, 10); c.stroke();
+    }
+  } else {
+    c.beginPath();
+    for (let i = 0; i < 10; i++) {
+      const a = (i / 10) * Math.PI * 2 - Math.PI / 2, r = i % 2 ? 6 : 14;
+      c.lineTo(Math.cos(a) * r, Math.sin(a) * r);
+    }
+    c.closePath();
+    c.fillStyle = '#ffd23a'; c.strokeStyle = '#1b1530'; c.lineWidth = 4;
+    c.fill(); c.stroke();
+  }
+  c.restore();
 }
 
 function hexRGB(hx: string): [number, number, number] {

@@ -26,6 +26,9 @@ You need a browser with WebGPU support (current Chrome, Edge or Safari).
 - **Fights**: big fish yank left or right. Steer against the pull with A/D and pulse the reel so the line doesn't snap.
 - **Day/night cycle and weather**: clear, cloudy, rain, fog and storms with lightning. At night the sea has glowing plankton and the lighthouse beam sweeps the water.
 - **Progression**: 10 upgrade tracks (8 to 12 tiers each), a supplies shop, rotating contracts, 60 achievements, pearls, and a style shop with hats, boat paint, flags, lure skins and fishing line colors.
+- **Story**: 22 quests from six characters (Old Marta, Prof. Finnegan, Queen Coralia, Dr. Sludge, Captain Barnacle and The Stranger) that lead from the harbor to The Void. Some quests reward pets that ride on your boat.
+- **World events**: feeding frenzies (fish bite 50% more), golden hours (every catch sells double) and meteor showers that drop collectible star fragments.
+- **Extras**: treasure maps from bottles mark an X to dig up; completing a zone's fish log masters it for +20% sell value; a perfect-cast sweet spot on the power meter; photo mode (F, then Enter to save a picture).
 - **World**: floating outposts in every zone for selling, restocking and fast travel; treasure chests; fishing hot spots; an aquarium at the harbor that shows off your best catches; dolphins, breaching whales, other fishing boats and a sailing ghost ship.
 
 ## Controls
@@ -40,6 +43,7 @@ You need a browser with WebGPU support (current Chrome, Edge or Safari).
 | 1 - 6 | Use supplies (chum, lucky charm, energy drink, sonar ping, boss bait, golden hook) | Same |
 | E | Shop at the harbor dock or an outpost | |
 | M / Esc / H | Map / pause / horn | |
+| F | Photo mode (Enter saves a picture) | |
 
 On a trackpad everything works without capturing the mouse. The camera also swings behind the boat or lure after a moment without manual look input.
 

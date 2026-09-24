@@ -1,8 +1,64 @@
-// Contracts (rotating fishing jobs) and achievements. Pure logic, unit tested.
+// Contracts (rotating fishing jobs), the story questline and achievements. Pure logic, unit tested.
 import { BOSS_FOR_ZONE, CATCHABLE, RARITY_COLOR, SPECIES, speciesById, type Rarity, type WeatherKind } from '../data/fish';
+import { type Quest, QUESTS } from '../data/quests';
 import { TRACKS, LEVEL_VALUE, nicePrice } from '../data/upgrades';
 import { ALL_ZONES, type ZoneId, ZONES } from '../data/zones';
-import type { CaughtFish, SaveData } from './economy';
+import { type CaughtFish, grantCosmetic, type SaveData } from './economy';
+
+// ------------------------------------------------------------------ story quests
+
+export function currentQuest(save: SaveData): Quest | null {
+  return QUESTS[save.quest.index] ?? null;
+}
+
+/** Feeds landed fish or sales into the active quest's counter. */
+export function questEvent(save: SaveData, ev: { catches?: CaughtFish[]; cast?: CastInfo; sold?: number }) {
+  const q = currentQuest(save);
+  if (!q) return;
+  const g = q.goal;
+  if (g.kind === 'catch' && ev.catches && ev.cast) {
+    for (const f of ev.catches) {
+      const sp = speciesById.get(f.id);
+      if (!sp || sp.junk) continue;
+      if (g.species && f.id !== g.species) continue;
+      if (g.zone && ev.cast.zone !== g.zone) continue;
+      if (g.rarity && sp.rarity !== g.rarity) continue;
+      if (g.storm && ev.cast.weather !== 'storm') continue;
+      if (g.night && !ev.cast.night) continue;
+      save.quest.progress++;
+    }
+  }
+  if (g.kind === 'sell' && ev.sold) save.quest.progress += ev.sold;
+}
+
+export function questStatus(save: SaveData): { value: number; goal: number } {
+  const q = currentQuest(save);
+  if (!q) return { value: 1, goal: 1 };
+  const g = q.goal;
+  switch (g.kind) {
+    case 'catch': return { value: save.quest.progress, goal: g.n };
+    case 'sell': return { value: save.quest.progress, goal: g.amount };
+    case 'upgrade': return { value: save.upgrades[g.track] >= g.tier ? 1 : 0, goal: 1 };
+    case 'visit': return { value: save.seenZones.includes(g.zone) ? 1 : 0, goal: 1 };
+    case 'dex': return { value: Object.keys(save.dex).length, goal: g.n };
+    case 'depth': return { value: Math.floor(save.stats.deepest), goal: g.meters };
+    case 'boss': return { value: save.bosses.includes(g.species) ? 1 : 0, goal: 1 };
+  }
+}
+
+/** If the active quest's goal is met: pays the reward, advances the story and returns the finished quest. */
+export function completeQuest(save: SaveData): Quest | null {
+  const q = currentQuest(save);
+  if (!q) return null;
+  const st = questStatus(save);
+  if (st.value < st.goal) return null;
+  save.money += q.reward.money;
+  save.stats.earned += q.reward.money;
+  save.pearls += q.reward.pearls;
+  if (q.reward.cosmetic) grantCosmetic(save, q.reward.cosmetic);
+  save.quest = { index: save.quest.index + 1, progress: 0, intro: false };
+  return q;
+}
 
 export type ContractKind = 'species' | 'rarity' | 'size' | 'zone' | 'depth' | 'haul' | 'night' | 'weather';
 

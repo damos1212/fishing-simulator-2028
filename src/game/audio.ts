@@ -213,7 +213,7 @@ export class GameAudio {
   buy() { [0, 7, 12].forEach((n, i) => this.tone(mtof(76 + n), 0.15, 'square', 0.07, 0, i * 0.06)); this.cash(); }
   deny() { this.tone(200, 0.15, 'square', 0.08); this.tone(150, 0.2, 'square', 0.08, 0, 0.1); }
   whoosh() { this.noise(0.4, 'bandpass', 400, 0.2, 2000, 3); }
-  horn() { this.tone(110, 0.8, 'sawtooth', 0.12); this.tone(138.6, 0.8, 'sawtooth', 0.1); }
+  horn(v = 1) { this.tone(110, 0.8, 'sawtooth', 0.12 * v); this.tone(138.6, 0.8, 'sawtooth', 0.1 * v); }
   zone() { [0, 7, 12, 19].forEach((n, i) => this.tone(mtof(60 + n), 0.5, 'sine', 0.08, 0, i * 0.12)); }
   warn() { this.tone(440, 0.15, 'square', 0.07); this.tone(330, 0.25, 'square', 0.07, 0, 0.16); }
   thunder(v = 1) {
