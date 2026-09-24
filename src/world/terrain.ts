@@ -420,13 +420,60 @@ export function buildTerrainMesh(N = Math.round(600 * Math.sqrt(MAP_R / 3900))):
 }
 
 /** Half-float height map in the ocean shader's warped layout (frame.mapInfo). */
+/**
+ * Height map in warped coordinates as interleaved half floats: r = height, g = distance (m) to the
+ * nearest shore over water (0 on land). The distance drives breaking waves in the ocean shader.
+ */
 export function buildHeightMap(size = 800): Uint16Array {
-  const out = new Uint16Array(size * size);
-  for (let j = 0; j < size; j++) for (let i = 0; i < size; i++) {
-    const x = warp(((i + 0.5) / size) * 2 - 1, MAP_R, MAP_P), z = warp(((j + 0.5) / size) * 2 - 1, MAP_R, MAP_P);
-    out[j * size + i] = toHalf(clamp(heightAt(x, z), -3000, 400));
-  }
+  const hts = new Float32Array(size * size);
+  const coord = new Float32Array(size);
+  for (let i = 0; i < size; i++) coord[i] = warp(((i + 0.5) / size) * 2 - 1, MAP_R, MAP_P);
+  for (let j = 0; j < size; j++) for (let i = 0; i < size; i++) hts[j * size + i] = clamp(heightAt(coord[i], coord[j]), -3000, 400);
+  const dist = shoreDistance(hts, coord, size);
+  const out = new Uint16Array(size * size * 2);
+  for (let k = 0; k < size * size; k++) { out[k * 2] = toHalf(hts[k]); out[k * 2 + 1] = toHalf(Math.min(dist[k], 400)); }
+  useHeightMap(out, size);
   return out;
+}
+
+/** Two-pass chamfer distance transform on the warped grid, in world meters. */
+function shoreDistance(h: Float32Array, coord: Float32Array, size: number) {
+  const d = new Float32Array(size * size);
+  for (let k = 0; k < d.length; k++) d[k] = h[k] >= 0 ? 0 : 1e9;
+  const step = (i: number, j: number, di: number, dj: number) => {
+    const ni = i + di, nj = j + dj;
+    if (ni < 0 || nj < 0 || ni >= size || nj >= size) return;
+    const c = Math.hypot(coord[ni] - coord[i], coord[nj] - coord[j]);
+    const k = j * size + i, nk = nj * size + ni;
+    if (d[nk] + c < d[k]) d[k] = d[nk] + c;
+  };
+  for (let j = 0; j < size; j++) for (let i = 0; i < size; i++) { step(i, j, -1, 0); step(i, j, 0, -1); step(i, j, -1, -1); step(i, j, 1, -1); }
+  for (let j = size - 1; j >= 0; j--) for (let i = size - 1; i >= 0; i--) { step(i, j, 1, 0); step(i, j, 0, 1); step(i, j, 1, 1); step(i, j, -1, 1); }
+  return d;
+}
+
+let shoreField = new Float32Array(4);
+let shoreSize = 2;
+const fromHalf = (v: number) => {
+  const e = (v >> 10) & 0x1f, m = v & 0x3ff, sgn = v & 0x8000 ? -1 : 1;
+  if (e === 0) return sgn * m * 2 ** -24;
+  if (e === 31) return sgn * Infinity;
+  return sgn * (1 + m / 1024) * 2 ** (e - 15);
+};
+/** Makes a (cached) height map current for CPU shore-distance lookups. */
+export function useHeightMap(data: Uint16Array, size: number) {
+  shoreField = new Float32Array(size * size);
+  for (let k = 0; k < size * size; k++) shoreField[k] = fromHalf(data[k * 2 + 1]);
+  shoreSize = size;
+}
+const unwarp = (x: number) => Math.sign(x) * Math.pow(Math.min(Math.abs(x) / MAP_R, 1), 1 / MAP_P);
+/** Distance (m) from a point on the water to the nearest shore. */
+export function shoreDistAt(x: number, z: number) {
+  const n = shoreSize;
+  const fx = clamp(((unwarp(x) + 1) / 2) * n - 0.5, 0, n - 1.001), fz = clamp(((unwarp(z) + 1) / 2) * n - 0.5, 0, n - 1.001);
+  const i = Math.floor(fx), j = Math.floor(fz), u = fx - i, v = fz - j;
+  const f = shoreField;
+  return lerp(lerp(f[j * n + i], f[j * n + i + 1], u), lerp(f[(j + 1) * n + i], f[(j + 1) * n + i + 1], u), v);
 }
 
 export const MAP_POWER = MAP_P;

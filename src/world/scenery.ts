@@ -22,6 +22,8 @@ export interface Prop {
 const zoneIdx = (id: string) => NAMED_ZONES.findIndex((z) => z.id === id);
 
 export interface Outpost { zone: ZoneId; name: string; pos: Vec3; yaw: number; dock: Vec3 }
+/** A static light source; `night` lights are dim by day. */
+export interface SceneLight { pos: Vec3; radius: number; color: [number, number, number]; intensity: number; night: boolean; flicker: number }
 /** A rift portal: the harbor gate travels between unlocked realms, the tear leads to the next realm. */
 export interface Portal { kind: 'gate' | 'tear'; pos: Vec3; yaw: number; color: [number, number, number] }
 
@@ -44,6 +46,7 @@ export class Scenery {
   readonly realm: RealmId;
   props: Prop[] = [];
   portals: Portal[] = [];
+  lights: SceneLight[] = [];
   baseName = '';
   volcanoTops: Vec3[] = [];
   factoryTop: Vec3 | null = null;
@@ -77,7 +80,34 @@ export class Scenery {
       buildRealmScenery(this, this.realm);
     }
     for (const isl of ISLANDS) if (isl.kind === 'volcano') this.volcanoTops.push(new Vec3(isl.x, heightAt(isl.x + isl.r * 0.03, isl.z) + isl.top * 0.06, isl.z));
+    for (const v of this.volcanoTops) this.addLight(v.x, v.y + 6, v.z, 160, [1, 0.45, 0.12], 2.5, false, 0.15);
+    for (const o of this.outposts) this.addLight(o.pos.x, 5, o.pos.z, 26, [1, 0.8, 0.5], 1.8, true, 0.05);
     this.buildPortals(unlockedRealms);
+  }
+
+  /** Swaying grass and flowers over an island's gentle slopes. */
+  meadow(isl: { x: number; z: number; r: number; seed: number }, grass: number, perSqm: number, flowerChance: number, avoid?: (x: number, z: number) => boolean) {
+    const r = rng(isl.seed * 31 + 7);
+    const count = Math.min(520, Math.round(Math.PI * isl.r * isl.r * perSqm));
+    const inst = Inst.solid(0, 0);
+    inst.c[3] = 7;
+    inst.amp = 45;
+    for (let k = 0; k < count; k++) {
+      const a = r() * Math.PI * 2, d = Math.sqrt(r()) * isl.r * 0.95;
+      const x = isl.x + Math.cos(a) * d, z = isl.z + Math.sin(a) * d;
+      const h = heightAt(x, z);
+      if (h < 1.6 || (avoid && avoid(x, z))) continue;
+      const slope = Math.abs(heightAt(x + 1.5, z) - h) + Math.abs(heightAt(x, z + 1.5) - h);
+      if (slope > 1.2) continue;
+      const flower = r() < flowerChance;
+      const mesh = flower ? this.a.flowers[Math.floor(r() * this.a.flowers.length)] : this.a.grass[grass];
+      const p = this.add(mesh, x, h - 0.05, z, r() * 6.28, flower ? 0.8 + r() * 0.6 : 0.9 + r() * 0.9, inst, flower ? 140 : 170);
+      p.phaseSpeed = 1.5;
+    }
+  }
+
+  addLight(x: number, y: number, z: number, radius: number, color: [number, number, number], intensity: number, night = true, flicker = 0) {
+    this.lights.push({ pos: new Vec3(x, y, z), radius, color, intensity, night, flicker });
   }
 
   /** Finds open water of a given depth near (x, z), searching outwards in rings. */
@@ -101,6 +131,7 @@ export class Scenery {
   /** (Re)creates this realm's rift portals; the harbor gate needs a second unlocked realm. */
   buildPortals(unlocked: RealmId[]) {
     this.portals = [];
+    this.lights = this.lights.filter((l) => !(l as SceneLight & { portal?: boolean }).portal);
     const info = realmById(this.realm);
     // the harbor gate appears once there is more than one realm to travel between
     if (unlocked.length > 1 || this.realm !== 'blue') {
@@ -110,6 +141,10 @@ export class Scenery {
     if (info.tear) {
       const t = this.findWater(info.tear.x, info.tear.z, 26, -10);
       if (t) this.portals.push({ kind: 'tear', pos: t, yaw: Math.atan2(-t.x, -t.z) + Math.PI / 2, color: [1.2, 0.4, 1.6] });
+    }
+    for (const p of this.portals) {
+      const c = p.color;
+      this.lights.push({ pos: new Vec3(p.pos.x, 13, p.pos.z), radius: 80, color: [c[0] / 1.6, c[1] / 1.6, c[2] / 1.6], intensity: 2.5, night: false, flicker: 0.2, portal: true } as SceneLight);
     }
   }
 
@@ -198,6 +233,9 @@ export class Scenery {
 
     const flag = Inst.solid(0, 0.03);
     this.add(this.a.flag, 5.5, 1.4, pierZ + 40, 0, 1, flag, 1500);
+    for (const x of [-5.6, 5.6]) this.addLight(x, 4.7, pierZ + 34.6, 16, [1, 0.78, 0.45], 2.2, true, 0.04);
+    this.addLight(sx, sy + 3, sz - 3.5, 14, [1, 0.8, 0.5], 1.6, true);
+    this.addLight(lx, ly + 17, lz, 60, [1, 0.9, 0.6], 3, true);
   }
 
   private buildIslands() {
@@ -223,6 +261,11 @@ export class Scenery {
           this.add(this.a.models.rock, x, h - s * 0.3, z, r() * 6.28, s, inst, 1800);
         }
       }
+      const harbor = isl === ISLANDS[0] && this.realm === 'blue';
+      const avoid = harbor ? (x: number, z: number) => Math.hypot(x + 15, z - 29) < 12 || Math.hypot(x - 30, z + 6) < 7 || (x > -30 && x < 14 && z > 12) : undefined;
+      if (isl.kind === 'grass') this.meadow(isl, 0, 0.05, 0.12, avoid);
+      else if (isl.kind === 'rock') this.meadow(isl, 1, 0.02, 0.05);
+      else if (isl.kind === 'candy') this.meadow(isl, 2, 0.04, 0.25);
       if (isl.kind === 'ruins') {
         const pillar = this.tint('#c8d0c0', 0.06);
         for (let k = 0; k < 7; k++) {
@@ -339,7 +382,9 @@ export class Scenery {
     this.scatter(Z.void, 60, 61, (x, z, _h, r) => {
       const above = r() < 0.5;
       const y = above ? 2 + r() * 30 : -5 - r() * 200;
-      this.add(models.crystal, x, y, z, r() * 6.28, 2 + r() * 6, voidCrystal, above ? 2500 : 220, !above, r() * 3, r() * 3);
+      const s = 2 + r() * 6;
+      this.add(models.crystal, x, y, z, r() * 6.28, s, voidCrystal, above ? 2500 : 220, !above, r() * 3, r() * 3);
+      if (above) this.addLight(x, y + s, z, 20 + s * 4, [0.7, 0.5, 1], 1.6, false, 0.1);
     });
 
     // treasure chests on the seafloor

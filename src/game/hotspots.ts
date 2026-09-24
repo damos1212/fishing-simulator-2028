@@ -13,7 +13,7 @@ export interface Hotspot { pos: Vec3; zone: number; radius: number; expires: num
 
 interface Jumper { actor: FishActor; t: number; start: Vec3; vel: Vec3 }
 
-const gullInst = Inst.solid(0, 0.02);
+const gullInst = Inst.solid(0, 0.02, true);
 gullInst.c[3] = 8;
 gullInst.amp = 0.35;
 

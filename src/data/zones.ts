@@ -25,6 +25,8 @@ export interface ZoneEnv {
   aurora: number; neon: number; vortex: number;
   /** cloud layer base height (m) and density multiplier */
   cloudBase: number; cloudDensity: number;
+  /** how much of the physically based sky shows through the zone palette (0 = fully stylized) */
+  physSky: number;
 }
 
 export interface Zone {
@@ -55,7 +57,7 @@ const base: ZoneEnv = {
   ambient: '#bcdcff', ground: '#6c8a70', ambientIntensity: 0.75, waves: 1,
   lava: '#ff5a10', lavaStrength: 0, voidAmount: 0, frost: 0, eerie: 0, storm: 0,
   floor: '#b9a57a',
-  clarity: 0.075, aurora: 0, neon: 0, vortex: 0, cloudBase: 900, cloudDensity: 1,
+  clarity: 0.075, aurora: 0, neon: 0, vortex: 0, cloudBase: 900, cloudDensity: 1, physSky: 0.85,
 };
 
 export const OPEN_SEA: Zone = {
@@ -291,9 +293,17 @@ export const REALMS: Realm[] = [
 ];
 export const realmById = (id: RealmId) => REALMS.find((r) => r.id === id)!;
 
+// fantasy skies keep more of their painted palette
+const SKY_WEIGHT: Partial<Record<ZoneId, number>> = {
+  candy: 0.2, toxic: 0.3, magma: 0.45, void: 0, storm: 0.7, temple: 0.6, tarpit: 0.35, crater: 0.25, fern: 0.8,
+  hellfire: 0, nether: 0, blackgate: 0, tranquil: 0, craters: 0, darkside: 0, sunset: 0.1, arcade: 0.05, glitch: 0, rim: 0, maw: 0,
+};
+const REALM_SKY: Record<RealmId, number> = { blue: 0.85, jurassic: 0.75, shattered: 0, selene: 0, neon: 0.08, maw: 0 };
+
 export const ALL_ZONES: Zone[] = [OPEN_SEA, ...ZONES, ...Object.values(REALM_OPEN).filter((z) => z !== OPEN_SEA), ...REALM_ZONES];
 /** Every named (non open-sea) zone, across all realms. Indexes match zoneWeights. */
 export const NAMED_ZONES: Zone[] = [...ZONES, ...REALM_ZONES];
+for (const z of ALL_ZONES) z.env = { ...z.env, physSky: SKY_WEIGHT[z.id] ?? REALM_SKY[z.realm] };
 export const zoneById = (id: ZoneId) => ALL_ZONES.find((z) => z.id === id)!;
 
 // ---------------------------------------------------------------- active realm

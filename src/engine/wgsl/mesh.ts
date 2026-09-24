@@ -142,7 +142,7 @@ fn decodeMat(a: f32) -> vec2f {
   o.lp = v.pos;
   o.ii = v.ii;
   o.ln = normalize(v.nor);
-  let mode = u32(inst.p.w + 0.5);
+  let mode = modeOf(inst.p.w);
   if (mode == 0u || mode == 4u) {
     let md = decodeMat(v.col.a);
     o.matId = u32(md.x);
@@ -159,7 +159,7 @@ fn decodeMat(a: f32) -> vec2f {
 
 fn shadowVertex(v: VIn, vp: mat4x4f) -> vec4f {
   let inst = insts[v.ii];
-  if (u32(inst.p.w + 0.5) == 2u) { return vec4f(0.0, 0.0, -2.0, 1.0); }
+  if (modeOf(inst.p.w) == 2u) { return vec4f(0.0, 0.0, -2.0, 1.0); }
   let p = animate(v.pos, inst);
   let wp = (inst.model * vec4f(p, 1.0)).xyz;
   return vp * vec4f(wp, 1.0);
@@ -273,7 +273,9 @@ fn fishColor(m: vec4f, lp: vec3f, inst: Inst, emis: ptr<function, vec3f>) -> vec
   let body = clamp(1.0 - m.b, 0.0, 1.0);
   let s = smoothstep(0.42, 0.58, m.r);
   var c = mix(inst.b.rgb, inst.a.rgb, s);
-  let pat = u32(inst.b.w + 0.5);
+  let patRaw = u32(inst.b.w + 0.5);
+  let pat = patRaw & 15u;
+  let shiny = patRaw >= 16u;
   let t = frame.camPos.w;
   if (pat == 1u) {
     let st = smoothstep(0.1, 0.13, abs(fract(lp.z * 2.3 + 0.1) - 0.5));
@@ -307,6 +309,14 @@ fn fishColor(m: vec4f, lp: vec3f, inst: Inst, emis: ptr<function, vec3f>) -> vec
     let crack = 1.0 - smoothstep(0.0, 0.07, cr.y - cr.x);
     *emis += inst.c.rgb * crack * (2.0 + sin(t * 3.0 + lp.z * 6.0));
   }
+  // shiny variants: a rainbow sheen that rolls along the body and twinkling scales
+  if (shiny) {
+    let band = fract(lp.z * 1.3 - lp.y * 0.8 + t * 0.35);
+    c = mix(c, hue(band) * 0.9 + 0.1, 0.45 * s);
+    let h = hash31(floor(lp * 60.0));
+    *emis += vec3f(1.0, 0.97, 0.9) * step(0.965, h) * (1.5 + 1.5 * sin(t * 7.0 + h * 60.0)) * s;
+    *emis += hue(band + 0.3) * 0.12;
+  }
   // overlapping scales on the body
   let sc = worley(vec2f(lp.z * 26.0 + floor(lp.y * 22.0) * 0.5, lp.y * 22.0), 0.0);
   c *= mix(1.0, 0.9 + 0.12 * smoothstep(0.15, 0.55, sc.x), body * s * 0.8);
@@ -314,6 +324,14 @@ fn fishColor(m: vec4f, lp: vec3f, inst: Inst, emis: ptr<function, vec3f>) -> vec
 }
 
 struct FOut { @location(0) color: vec4f };
+// Instance mode: low 4 bits are the shading kind, +16 flags things that move with the boat or swim.
+// Moving surfaces store a negative view distance so temporal AA and motion blur treat them gently.
+fn modeOf(w: f32) -> u32 { return u32(w + 0.5) & 15u; }
+fn signedDist(wp: vec3f, w: f32) -> f32 {
+  let d = distance(wp, frame.camPos.xyz);
+  let m = u32(w + 0.5);
+  return select(d, -d, m >= 16u || (m & 15u) == 1u || (m & 15u) == 4u);
+}
 
 fn faceNormal(in: VOut, ff: bool) -> vec3f {
   let n = normalize(in.n);
@@ -323,8 +341,8 @@ fn faceNormal(in: VOut, ff: bool) -> vec3f {
 // Props, the boat and glowing parts (modes 0, 2, 4).
 @fragment fn fs(in: VOut, @builtin(front_facing) ff: bool) -> FOut {
   let inst = insts[in.ii];
-  let mode = u32(inst.p.w + 0.5);
-  let dist = distance(in.wp, frame.camPos.xyz);
+  let mode = modeOf(inst.p.w);
+  let dist = signedDist(in.wp, inst.p.w);
   var o: FOut;
   var albedo = in.col.rgb * inst.a.rgb;
   if (mode == 2u) {
@@ -385,9 +403,10 @@ fn faceNormal(in: VOut, ff: bool) -> vec3f {
   albedo *= 1.0 - grassy * 0.18 * step(0.62, dFine.a);
   if (luma(albedo) > 0.75) { emissive += vec3f(step(0.992, hash31(floor(wp * 7.0)))) * frame.sunDir.w * 0.5; }
   let wet = smoothstep(1.4, 0.2, wp.y) * smoothstep(-1.5, 0.0, wp.y);
-  albedo *= mix(1.0, 0.6, wet);
-  m.rough = mix(0.95, 0.18, wet);
-  m.f0 = mix(0.03, 0.05, wet);
+  let glisten = sandGlisten(wp);
+  albedo *= mix(1.0, 0.6, max(wet * 0.7, glisten));
+  m.rough = mix(mix(0.95, 0.35, wet), 0.08, glisten);
+  m.f0 = mix(0.03, 0.06, max(wet, glisten));
   let lava = in.col.a;
   if (lava > 0.01) {
     let flick = 0.75 + 0.25 * sin(frame.camPos.w * 2.0 + wp.x * 0.13 + wp.z * 0.11);
@@ -402,7 +421,7 @@ fn faceNormal(in: VOut, ff: bool) -> vec3f {
 @fragment fn fsRefl(in: VOut, @builtin(front_facing) ff: bool) -> FOut {
   if (in.wp.y < -0.15) { discard; }
   let inst = insts[in.ii];
-  let mode = u32(inst.p.w + 0.5);
+  let mode = modeOf(inst.p.w);
   var albedo = in.col.rgb * inst.a.rgb;
   var o: FOut;
   let dist = distance(in.wp, frame.camPos.xyz);
@@ -423,7 +442,7 @@ fn faceNormal(in: VOut, ff: bool) -> vec3f {
   let under = underwaterness(in.wp.y);
   let c = mix(base, frame.uwDeep.rgb * 0.5, under * 0.5);
   var o: FOut;
-  o.color = vec4f(applyFog(c, in.wp), distance(in.wp, frame.camPos.xyz));
+  o.color = vec4f(applyFog(c, in.wp), signedDist(in.wp, insts[in.ii].p.w));
   return o;
 }
 `;

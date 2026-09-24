@@ -79,7 +79,8 @@ export class FrameState {
   volumetric = 0;
   cloudSteps = 32;
   rays = 0.6;
-  realmStyle = 0;
+  /** rainbow strength (after rain) */
+  rainbow = 0;
   lowGravity = 0;
   /** Up to two planets in the sky: direction + angular radius, and tint + style (0 = none). */
   planetA = [0, 1, 0, 0];
@@ -88,8 +89,42 @@ export class FrameState {
   planetBColor = [1, 1, 1, 0];
   /** x, z, age, strength per wake puff */
   wake = new Float32Array(64);
+  /** Last frame's unjittered view-projection (temporal AA, motion blur). */
+  prevViewProj = mat4.create();
+  /** Unjittered view-projection of this frame. */
+  cleanViewProj = mat4.create();
+  /** Sub-pixel projection offset (NDC) and whether temporal AA is on. */
+  jitterX = 0;
+  jitterY = 0;
+  taa = 0;
+  /** Water height under the camera, lens droplets after surfacing (0..1), camera motion blur strength. */
+  camWater = 0;
+  droplets = 0;
+  motionBlur = 0;
+  /** Up to two whales ploughing a wake: x, z, heading, strength. */
+  whaleA = [0, 0, 0, 0];
+  whaleB = [0, 0, 0, 0];
+  /** Physically based sky: blend weight, cirrus amount, exposure, bad-weather greying. */
+  physSky = 1;
+  cirrus = 0.5;
+  skyExposure = 1;
+  skyGrey = 0;
+  /** Sun below the horizon too (the light direction switches to the moon at night). */
+  trueSun = new Vec3(0, 1, 0);
+  /** Shoreline: breaker strength, swash reach (m), wet sand amount. */
+  breakers = 1;
+  swash = 1;
+  wetSand = 1;
+  /** Screen-space ambient occlusion and contact shadow strength, soft (contact-hardening) shadows, sun size. */
+  aoStrength = 0.8;
+  contactShadows = 0.6;
+  pcss = 1;
+  sunSize = 1;
 
-  static readonly FLOATS = 264;
+  /** Developer view: 1 = ambient occlusion and contact shadows. */
+  debugView = 0;
+
+  static readonly FLOATS = 316;
 
   setCamera(view: Mat4, proj: Mat4, pos: Vec3) {
     this.proj.set(proj);
@@ -132,11 +167,21 @@ export class FrameState {
     v4(168, this.clipReflect, this.aurora, this.neon, this.vortex);
     v4(172, this.waterAbsorb, this.planar, this.foam, this.waterDetail);
     v4(176, this.cloudBase, this.cloudThickness, this.cloudDensity, this.volumetric);
-    v4(180, this.cloudSteps, this.rays, this.realmStyle, this.lowGravity);
+    v4(180, this.cloudSteps, this.rays, this.rainbow, this.lowGravity);
     o.set(this.planetA, 184);
     o.set(this.planetAColor, 188);
     o.set(this.planetB, 192);
     o.set(this.planetBColor, 196);
     o.set(this.wake, 200);
+    o.set(this.prevViewProj, 264);
+    v4(280, this.jitterX, this.jitterY, this.taa, this.proj[5]);
+    v4(284, this.camWater, this.droplets, this.motionBlur, 0);
+    o.set(this.whaleA, 288);
+    o.set(this.whaleB, 292);
+    v4(296, this.physSky, this.cirrus, this.skyExposure, this.skyGrey);
+    v4(300, this.trueSun.x, this.trueSun.y, this.trueSun.z, 0);
+    v4(304, this.breakers, this.swash, this.wetSand, 0);
+    v4(308, this.aoStrength, this.contactShadows, this.pcss, this.sunSize);
+    v4(312, this.debugView, 0, 0, 0);
   }
 }

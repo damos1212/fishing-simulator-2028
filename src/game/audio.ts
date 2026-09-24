@@ -218,6 +218,46 @@ export class GameAudio {
   buy() { [0, 7, 12].forEach((n, i) => this.tone(mtof(76 + n), 0.15, 'square', 0.07, 0, i * 0.06)); this.cash(); }
   deny() { this.tone(200, 0.15, 'square', 0.08); this.tone(150, 0.2, 'square', 0.08, 0, 0.1); }
   whoosh() { this.noise(0.4, 'bandpass', 400, 0.2, 2000, 3); }
+  /** Orb pickup: the pitch climbs while you keep a chain going. */
+  orb(streak: number, pearl: boolean) {
+    const base = 72 + Math.min(streak, 14);
+    this.tone(mtof(base), 0.12, 'sine', 0.07);
+    this.tone(mtof(base + 7), 0.14, 'triangle', 0.04, 0, 0.04);
+    if (pearl) [0, 4, 7, 12, 16].forEach((k, i) => this.tone(mtof(84 + k), 0.2, 'sine', 0.06, 0, i * 0.05));
+  }
+  /** Crossing into a deeper layer of the sea. */
+  layer(n: number) {
+    this.tone(mtof(48 - n * 3), 1.6, 'sine', 0.12, -8);
+    [0, 7, 12].forEach((k, i) => this.tone(mtof(60 - n * 2 + k), 0.9, 'triangle', 0.04, 0, 0.15 + i * 0.12));
+  }
+  /** Something enormous passing in the dark. */
+  groan() {
+    this.tone(62, 3.2, 'sawtooth', 0.05, 40);
+    this.tone(48, 3.6, 'sine', 0.12, 35, 0.3);
+    this.noise(2.5, 'lowpass', 300, 0.08, 120, 2, 0.2);
+  }
+  /** Glittering arpeggio for a shiny fish. */
+  shiny() {
+    [0, 7, 12, 16, 19, 24, 28].forEach((k, i) => {
+      this.tone(mtof(79 + k), 0.28, 'sine', 0.06, 0, i * 0.045);
+      this.tone(mtof(91 + k), 0.12, 'triangle', 0.025, 0, i * 0.045 + 0.02);
+    });
+  }
+  /** The kraken surfacing: a deep bellow over churning water. */
+  kraken() {
+    this.tone(40, 3.5, 'sawtooth', 0.14, 25);
+    this.tone(55, 3, 'square', 0.05, 30, 0.2);
+    this.noise(3, 'lowpass', 400, 0.18, 150, 1.5);
+  }
+  /** A tentacle slapping the hull. */
+  slap() {
+    this.noise(0.25, 'lowpass', 900, 0.2, 200, 1);
+    this.tone(90, 0.2, 'sine', 0.12, 50);
+  }
+  /** Air horn for tournaments. */
+  airhorn() {
+    [0, 0.45].forEach((d) => { this.tone(311, 0.35, 'sawtooth', 0.06, 0, d); this.tone(392, 0.35, 'sawtooth', 0.05, 0, d); });
+  }
   /** Rising chime for each combo step. */
   combo(n: number) {
     const base = 67 + Math.min(n, 10) * 2;

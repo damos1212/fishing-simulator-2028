@@ -4,12 +4,16 @@
 //   3. planar reflection: the scene mirrored below the sea surface, at reduced resolution
 //   4. opaque pass (MSAA): sky, meshes, outlines -> resolved to `sceneColor` (alpha = view distance)
 //   5. water pass (MSAA, continues on the same targets): ocean refracting `sceneColor`, ribbons, particles
-//   6. post: god rays, bloom chain, tonemapping and grading
+//   6. screen space: GTAO + contact shadows (half res), auto exposure meter, temporal resolve
+//      (anti-aliasing and upscaling from the render resolution to the output resolution)
+//   7. post: god rays, bloom chain, tonemapping, grading, waterline, lens drops, motion blur
 import { FrameState } from './frame';
+import { Atmosphere } from './atmosphere';
+import { OceanFFT } from './ocean-fft';
 import type { GPUContext } from './gpu';
 import type { MeshData, ModelData } from './glb';
 import { mat4, type Mat4, Vec3 } from './math';
-import { CLOUDS, DETAIL, MESH, NOISE3D, OCEAN, PARTICLES, POST, SKY, UNLIT, WATER_NORMALS } from './shaders';
+import { CLOUDS, DETAIL, EXPOSURE, GTAO, GTAO_BLUR, MESH, NOISE3D, OCEAN, PARTICLES, POST, RESOLVE, SKY, UNLIT, VOLUME, WATER_NORMALS } from './shaders';
 
 const HDR: GPUTextureFormat = 'rgba16float';
 const DEPTH: GPUTextureFormat = 'depth32float';
@@ -17,7 +21,9 @@ const INST_FLOATS = 32;
 const PART_FLOATS = 12;
 const UNLIT_FLOATS = 7;
 const BLOOM_LEVELS = 5;
-const POST_FLOATS = 28;
+const POST_FLOATS = 76;
+const MAX_LIGHTS = 32;
+const LIGHT_FLOATS = 8;
 
 export interface GpuMesh {
   name: string;
@@ -54,10 +60,13 @@ export class Inst {
   outline = 0;
   /** 0 vertex color, 1 fish mask, 2 unlit emissive, 3 terrain, 4 boat */
   mode = 0;
-  static solid(mode = 0, outline = 0) {
+  /** Moves with the boat or on its own (temporal AA keeps less history for it). Fish and boats always count. */
+  moving = false;
+  static solid(mode = 0, outline = 0, moving = false) {
     const i = new Inst();
     i.mode = mode;
     i.outline = outline;
+    i.moving = moving;
     return i;
   }
 }
@@ -73,13 +82,19 @@ export interface GraphicsQuality {
   cloudSize: number;
   cloudSteps: number;
   rays: boolean;
+  /** raymarched light shafts under water and in haze */
+  volumetric: boolean;
+  /** screen-space ambient occlusion, contact shadows, contact-hardening soft shadows */
+  ao: boolean;
+  contact: boolean;
+  pcss: boolean;
 }
 
 export const QUALITY: GraphicsQuality[] = [
-  { name: 'Low', shadows: 0, shadowSize: 1024, reflections: false, reflScale: 0.5, clouds: false, cloudSize: 256, cloudSteps: 16, rays: false },
-  { name: 'Medium', shadows: 1, shadowSize: 2048, reflections: false, reflScale: 0.5, clouds: true, cloudSize: 384, cloudSteps: 22, rays: true },
-  { name: 'High', shadows: 2, shadowSize: 2048, reflections: true, reflScale: 0.5, clouds: true, cloudSize: 512, cloudSteps: 30, rays: true },
-  { name: 'Ultra', shadows: 2, shadowSize: 4096, reflections: true, reflScale: 0.75, clouds: true, cloudSize: 768, cloudSteps: 44, rays: true },
+  { name: 'Low', shadows: 0, shadowSize: 1024, reflections: false, reflScale: 0.5, clouds: false, cloudSize: 256, cloudSteps: 16, rays: false, volumetric: false, ao: false, contact: false, pcss: false },
+  { name: 'Medium', shadows: 1, shadowSize: 2048, reflections: false, reflScale: 0.5, clouds: true, cloudSize: 384, cloudSteps: 22, rays: true, volumetric: true, ao: true, contact: false, pcss: false },
+  { name: 'High', shadows: 2, shadowSize: 2048, reflections: true, reflScale: 0.5, clouds: true, cloudSize: 512, cloudSteps: 30, rays: true, volumetric: true, ao: true, contact: true, pcss: true },
+  { name: 'Ultra', shadows: 2, shadowSize: 4096, reflections: true, reflScale: 0.75, clouds: true, cloudSize: 768, cloudSteps: 44, rays: true, volumetric: true, ao: true, contact: true, pcss: true },
 ];
 
 interface PostSlot { buf: GPUBuffer; bg: GPUBindGroup }
@@ -87,14 +102,23 @@ interface PostSlot { buf: GPUBuffer; bg: GPUBindGroup }
 export class Renderer {
   readonly device: GPUDevice;
   readonly frame = new FrameState();
+  fft!: OceanFFT;
+  atmo!: Atmosphere;
   readonly post = {
     time: 0, underwater: 0, bloom: 0.55, exposure: 1, flash: [0, 0, 0, 0], fade: [0, 0, 0, 0], vignette: 0.35, saturation: 1.12, aberration: 0, threshold: 2.2,
-    rays: 0.55, contrast: 0.22, warmth: 0.6, grain: 0.018, warp: 0,
+    rays: 0.55, contrast: 0.22, warmth: 0.6, grain: 0.018, warp: 0, flare: 0.7,
   };
+  /** Render resolution (scene passes) and output resolution (the canvas). */
   width = 1;
   height = 1;
+  outW = 1;
+  outH = 1;
   renderScale = 1;
   quality: GraphicsQuality = QUALITY[2];
+  /** Temporal anti-aliasing / upscaling, camera motion blur strength, auto exposure, sharpening. */
+  readonly settings = { taa: true, motionBlur: 0.5, autoExposure: true, sharpen: 0.35 };
+  /** Lens effects driven by the game: drops on the lens (0..1) and seconds since they appeared. */
+  readonly lens = { drops: 0, dropTime: 99 };
 
   private ctx: GPUContext;
   private frameData = new Float32Array(FrameState.FLOATS);
@@ -112,6 +136,10 @@ export class Renderer {
   private sceneColor!: GPUTexture;
   private hdr!: GPUTexture;
   private raysTex!: GPUTexture;
+  private volTex!: GPUTexture;
+  private volPipe: GPURenderPipeline;
+  private volBGL: GPUBindGroupLayout;
+  private volBG!: GPUBindGroup;
   private reflColor!: GPUTexture;
   private reflDepth!: GPUTexture;
   private bloom: GPUTexture[] = [];
@@ -165,10 +193,39 @@ export class Renderer {
   private upPipe: GPURenderPipeline;
   private compositePipe: GPURenderPipeline;
   private raysPipe: GPURenderPipeline;
-  private slots: { prefilter?: PostSlot; down: PostSlot[]; up: PostSlot[]; composite?: PostSlot; rays?: PostSlot } = { down: [], up: [] };
+  private slots: { prefilter?: PostSlot; down: PostSlot[]; up: PostSlot[]; rays?: PostSlot } = { down: [], up: [] };
   private dummyTex: GPUTexture;
   private postData = new Float32Array(POST_FLOATS);
+  private lightBuf!: GPUBuffer;
+  private lightData = new Float32Array(4 + MAX_LIGHTS * LIGHT_FLOATS);
+  /** Point lights submitted this frame: x, y, z, radius, r, g, b, intensity. */
+  private lightList: number[][] = [];
   private sunUV = [0.5, 0.5, 0];
+  private aoBGL: GPUBindGroupLayout;
+  private aoBlurBGL: GPUBindGroupLayout;
+  private resolveBGL: GPUBindGroupLayout;
+  private aoPipe: GPURenderPipeline;
+  private aoBlurPipe: GPURenderPipeline;
+  private resolvePipe: GPURenderPipeline;
+  private aoRaw!: GPUTexture;
+  private aoTex!: GPUTexture;
+  private aoBG!: GPUBindGroup;
+  private aoBlurBG!: GPUBindGroup;
+  private history: GPUTexture[] = [];
+  private resolveBGs: GPUBindGroup[] = [];
+  private composites: PostSlot[] = [];
+  private histIdx = 0;
+  private historyValid = false;
+  private frameIndex = 0;
+  private expoPipe: GPUComputePipeline;
+  private expoBGL: GPUBindGroupLayout;
+  private expoBG!: GPUBindGroup;
+  private expoBuf: GPUBuffer;
+  private expoU: GPUBuffer;
+  private lastRender = 0;
+  /** The cloud dome is refreshed a third at a time (clouds drift slowly). */
+  private cloudSlice = 0;
+  private cloudsFresh = false;
 
   constructor(ctx: GPUContext) {
     this.ctx = ctx;
@@ -193,8 +250,12 @@ export class Renderer {
         { binding: 5, visibility: VF, texture: { sampleType: 'float' } },
         { binding: 6, visibility: VF, sampler: { type: 'filtering' } },
         { binding: 7, visibility: VF, texture: { sampleType: 'float' } },
+        { binding: 8, visibility: VF, buffer: { type: 'read-only-storage' } },
+        { binding: 9, visibility: VF, texture: { sampleType: 'float' } },
       ],
     });
+    this.atmo = new Atmosphere(d);
+    this.lightBuf = d.createBuffer({ size: (4 + MAX_LIGHTS * LIGHT_FLOATS) * 4, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
     this.linSampler = d.createSampler({ magFilter: 'linear', minFilter: 'linear', addressModeU: 'clamp-to-edge', addressModeV: 'clamp-to-edge' });
     this.repSampler = d.createSampler({ magFilter: 'linear', minFilter: 'linear', addressModeU: 'repeat', addressModeV: 'repeat', addressModeW: 'repeat' });
     this.cmpSampler = d.createSampler({ magFilter: 'linear', minFilter: 'linear', compare: 'less', addressModeU: 'clamp-to-edge', addressModeV: 'clamp-to-edge' });
@@ -249,8 +310,16 @@ export class Renderer {
     this.ensureInstances(4096);
 
     // ocean
+    this.fft = new OceanFFT(d, this.repSampler);
+    const OVF = GPUShaderStage.FRAGMENT | GPUShaderStage.VERTEX;
     this.oceanBGL = d.createBindGroupLayout({
-      entries: [0, 1, 2, 3].map((binding) => ({ binding, visibility: GPUShaderStage.FRAGMENT | GPUShaderStage.VERTEX, texture: { sampleType: 'float' as const } })),
+      entries: [
+        ...[0, 1, 2, 3].map((binding) => ({ binding, visibility: OVF, texture: { sampleType: 'float' as const } })),
+        { binding: 4, visibility: OVF, texture: { sampleType: 'float', viewDimension: '2d-array' } },
+        { binding: 5, visibility: OVF, texture: { sampleType: 'float', viewDimension: '2d-array' } },
+        { binding: 6, visibility: OVF, buffer: { type: 'uniform' } },
+        { binding: 7, visibility: OVF, sampler: { type: 'filtering' } },
+      ],
     });
     const oceanModule = this.module('ocean', OCEAN);
     this.oceanPipe = d.createRenderPipeline({
@@ -291,9 +360,22 @@ export class Renderer {
       primitive: { topology: 'triangle-list' },
     });
 
+    // volumetric light
+    this.volBGL = d.createBindGroupLayout({ entries: [{ binding: 0, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } }] });
+    const volModule = this.module('volume', VOLUME);
+    this.volPipe = d.createRenderPipeline({
+      label: 'volume', layout: d.createPipelineLayout({ bindGroupLayouts: [this.frameBGL, this.volBGL] }),
+      vertex: { module: volModule, entryPoint: 'vs' },
+      fragment: { module: volModule, entryPoint: 'fs', targets: [{ format: HDR }] },
+      primitive: { topology: 'triangle-list' },
+    });
+
     // particles
     this.partBGL = d.createBindGroupLayout({
-      entries: [{ binding: 0, visibility: GPUShaderStage.VERTEX, buffer: { type: 'read-only-storage' } }],
+      entries: [
+        { binding: 0, visibility: GPUShaderStage.VERTEX, buffer: { type: 'read-only-storage' } },
+        { binding: 1, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } },
+      ],
     });
     const partModule = this.module('particles', PARTICLES);
     this.partPipe = d.createRenderPipeline({
@@ -304,7 +386,7 @@ export class Renderer {
       depthStencil: depthRead, multisample: ms,
     });
     this.partBuf = d.createBuffer({ size: this.parts.data.byteLength, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
-    this.partBG = d.createBindGroup({ layout: this.partBGL, entries: [{ binding: 0, resource: { buffer: this.partBuf } }] });
+
 
     // unlit ribbons (fishing line etc.)
     const unlitModule = this.module('unlit', UNLIT);
@@ -328,6 +410,8 @@ export class Renderer {
         { binding: 2, visibility: GPUShaderStage.FRAGMENT, sampler: { type: 'filtering' } },
         { binding: 3, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } },
         { binding: 4, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } },
+        { binding: 5, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } },
+        { binding: 6, visibility: GPUShaderStage.FRAGMENT, buffer: { type: 'read-only-storage' } },
       ],
     });
     const postModule = this.module('post', POST);
@@ -347,8 +431,36 @@ export class Renderer {
     this.raysPipe = postPipe('rays', HDR);
     this.compositePipe = postPipe('composite', ctx.format);
     this.dummyTex = d.createTexture({ size: [1, 1], format: HDR, usage: GPUTextureUsage.TEXTURE_BINDING });
+
+    // screen-space occlusion, temporal resolve and exposure
+    const FR = GPUShaderStage.FRAGMENT;
+    const tex = (binding: number): GPUBindGroupLayoutEntry => ({ binding, visibility: FR, texture: { sampleType: 'float' } });
+    this.aoBGL = d.createBindGroupLayout({ entries: [tex(0)] });
+    this.aoBlurBGL = d.createBindGroupLayout({ entries: [tex(0), tex(1)] });
+    this.resolveBGL = d.createBindGroupLayout({ entries: [tex(0), tex(1), tex(2), tex(3), { binding: 4, visibility: FR, sampler: { type: 'filtering' } }] });
+    const screenPipe = (label: string, code: string, bgl: GPUBindGroupLayout) => {
+      const module = this.module(label, code);
+      return d.createRenderPipeline({
+        label, layout: d.createPipelineLayout({ bindGroupLayouts: [this.frameBGL, bgl] }),
+        vertex: { module, entryPoint: 'vs' }, fragment: { module, entryPoint: 'fs', targets: [{ format: HDR }] }, primitive: { topology: 'triangle-list' },
+      });
+    };
+    this.aoPipe = screenPipe('gtao', GTAO, this.aoBGL);
+    this.aoBlurPipe = screenPipe('gtao-blur', GTAO_BLUR, this.aoBlurBGL);
+    this.resolvePipe = screenPipe('resolve', RESOLVE, this.resolveBGL);
+    this.expoBGL = d.createBindGroupLayout({
+      entries: [
+        { binding: 0, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'uniform' } },
+        { binding: 1, visibility: GPUShaderStage.COMPUTE, texture: { sampleType: 'float' } },
+        { binding: 2, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'storage' } },
+      ],
+    });
+    const expoModule = this.module('exposure', EXPOSURE);
+    this.expoPipe = d.createComputePipeline({ label: 'exposure', layout: d.createPipelineLayout({ bindGroupLayouts: [this.expoBGL] }), compute: { module: expoModule, entryPoint: 'main' } });
+    this.expoBuf = d.createBuffer({ size: 16, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC });
+    this.expoU = d.createBuffer({ size: 32, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
     this.setQuality(2);
-    this.setHeightMap(new Uint16Array(4), 2);
+    this.setHeightMap(new Uint16Array(8), 2);
     this.resize();
   }
 
@@ -401,6 +513,7 @@ export class Renderer {
     }
     const cloudSize = q.clouds ? q.cloudSize : 4;
     if (first || this.cloudTex.width !== cloudSize) {
+      this.cloudsFresh = false;
       this.cloudTex?.destroy();
       this.cloudTex = d.createTexture({ size: [cloudSize, cloudSize], format: HDR, usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING });
     }
@@ -431,6 +544,8 @@ export class Renderer {
         { binding: 5, resource: this.cloudTex.createView() },
         { binding: 6, resource: this.linSampler },
         { binding: 7, resource: this.detailTex.createView() },
+        { binding: 8, resource: { buffer: this.lightBuf } },
+        { binding: 9, resource: this.atmo.skyView.createView() },
       ],
     });
     this.frameBG = full(this.frameBuf);
@@ -499,7 +614,7 @@ export class Renderer {
     s[o + 28] = inst.phase;
     s[o + 29] = inst.amp;
     s[o + 30] = inst.outline;
-    s[o + 31] = inst.mode;
+    s[o + 31] = inst.mode + (inst.moving ? 16 : 0);
     mesh.count++;
   }
 
@@ -518,6 +633,29 @@ export class Renderer {
     d[o + 8] = kind; d[o + 9] = rot; d[o + 10] = stretch; d[o + 11] = 0;
   }
 
+  /** Forget temporal history after a camera cut (teleports, realm jumps). */
+  resetHistory() { this.historyValid = false; }
+
+  /** Adds a point light for this frame; the renderer keeps the ones that matter most near the camera. */
+  light(x: number, y: number, z: number, radius: number, r: number, g: number, b: number, intensity: number) {
+    if (intensity <= 0.01 || radius <= 0) return;
+    this.lightList.push([x, y, z, radius, r, g, b, intensity]);
+  }
+
+  private uploadLights() {
+    const c = this.frame.camPos;
+    const list = this.lightList;
+    // rank by how much of the view they can reach: nearby, large and bright first
+    const score = list.map((l) => Math.max(0, Math.hypot(l[0] - c.x, l[1] - c.y, l[2] - c.z) - l[3]) / (1 + l[7]));
+    const order = list.map((_, i) => i).sort((a, b) => score[a] - score[b]);
+    const n = Math.min(MAX_LIGHTS, list.length);
+    const o = this.lightData;
+    o[0] = n;
+    for (let i = 0; i < n; i++) o.set(list[order[i]], 4 + i * LIGHT_FLOATS);
+    this.device.queue.writeBuffer(this.lightBuf, 0, o.buffer, 0, (4 + n * LIGHT_FLOATS) * 4);
+    list.length = 0;
+  }
+
   /** Pushes one unlit triangle vertex (premultiplied by alpha in shader). */
   vertex(x: number, y: number, z: number, r: number, g: number, b: number, a: number) {
     const u = this.unlit;
@@ -527,11 +665,11 @@ export class Renderer {
     d[o] = x; d[o + 1] = y; d[o + 2] = z; d[o + 3] = r; d[o + 4] = g; d[o + 5] = b; d[o + 6] = a;
   }
 
-  /** Height map in warped coordinates (see Terrain), stored as half floats. */
+  /** Height map in warped coordinates (see Terrain): half floats, r = height, g = distance to the shore. */
   setHeightMap(data: Uint16Array, size: number) {
     this.heightTex?.destroy();
-    this.heightTex = this.device.createTexture({ size: [size, size], format: 'r16float', usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST });
-    this.device.queue.writeTexture({ texture: this.heightTex }, data.buffer, { bytesPerRow: size * 2, offset: data.byteOffset }, [size, size]);
+    this.heightTex = this.device.createTexture({ size: [size, size], format: 'rg16float', usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST });
+    this.device.queue.writeTexture({ texture: this.heightTex }, data.buffer, { bytesPerRow: size * 4, offset: data.byteOffset }, [size, size]);
     this.makeOceanGroup();
   }
 
@@ -544,28 +682,61 @@ export class Renderer {
         { binding: 1, resource: this.sceneColor.createView() },
         { binding: 2, resource: this.reflColor.createView() },
         { binding: 3, resource: this.waterNrm.createView() },
+        { binding: 4, resource: this.fft.disp.createView({ dimension: '2d-array' }) },
+        { binding: 5, resource: this.fft.deriv.createView({ dimension: '2d-array' }) },
+        { binding: 6, resource: { buffer: this.fft.params } },
+        { binding: 7, resource: this.fft.sampler },
       ],
     });
   }
 
   resize() {
     const c = this.ctx.canvas;
-    const dpr = Math.min(window.devicePixelRatio || 1, 2) * this.renderScale;
-    const w = Math.max(1, Math.floor(c.clientWidth * dpr));
-    const h = Math.max(1, Math.floor(c.clientHeight * dpr));
-    if (w === this.width && h === this.height && this.hdr) return;
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    const ow = Math.max(1, Math.floor(c.clientWidth * dpr));
+    const oh = Math.max(1, Math.floor(c.clientHeight * dpr));
+    const w = Math.max(1, Math.floor(ow * this.renderScale));
+    const h = Math.max(1, Math.floor(oh * this.renderScale));
+    if (w === this.width && h === this.height && ow === this.outW && oh === this.outH && this.hdr) return;
     this.width = w;
     this.height = h;
-    c.width = w;
-    c.height = h;
+    this.outW = ow;
+    this.outH = oh;
+    c.width = ow;
+    c.height = oh;
     const d = this.device;
-    for (const t of [this.msaaColor, this.depthTex, this.hdr, this.sceneColor, this.raysTex, this.reflColor, this.reflDepth, ...this.bloom]) t?.destroy();
+    for (const t of [this.msaaColor, this.depthTex, this.hdr, this.sceneColor, this.raysTex, this.volTex, this.reflColor, this.reflDepth, this.aoRaw, this.aoTex,
+      ...this.bloom, ...this.history]) t?.destroy();
     const RT = GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING;
     this.msaaColor = d.createTexture({ size: [w, h], format: HDR, sampleCount: 4, usage: GPUTextureUsage.RENDER_ATTACHMENT });
     this.depthTex = d.createTexture({ size: [w, h], format: DEPTH, sampleCount: 4, usage: GPUTextureUsage.RENDER_ATTACHMENT });
     this.hdr = d.createTexture({ size: [w, h], format: HDR, usage: RT });
     this.sceneColor = d.createTexture({ size: [w, h], format: HDR, usage: RT });
-    this.raysTex = d.createTexture({ size: [Math.max(1, w >> 1), Math.max(1, h >> 1)], format: HDR, usage: RT });
+    const hw = Math.max(1, w >> 1), hh = Math.max(1, h >> 1);
+    this.raysTex = d.createTexture({ size: [hw, hh], format: HDR, usage: RT });
+    this.volTex = d.createTexture({ size: [hw, hh], format: HDR, usage: RT });
+    this.aoRaw = d.createTexture({ size: [hw, hh], format: HDR, usage: RT });
+    this.aoTex = d.createTexture({ size: [hw, hh], format: HDR, usage: RT });
+    this.history = [0, 1].map(() => d.createTexture({ size: [ow, oh], format: HDR, usage: RT }));
+    this.historyValid = false;
+    this.volBG = d.createBindGroup({ layout: this.volBGL, entries: [{ binding: 0, resource: this.sceneColor.createView() }] });
+    this.partBG = d.createBindGroup({ layout: this.partBGL, entries: [{ binding: 0, resource: { buffer: this.partBuf } }, { binding: 1, resource: this.sceneColor.createView() }] });
+    this.aoBG = d.createBindGroup({ layout: this.aoBGL, entries: [{ binding: 0, resource: this.sceneColor.createView() }] });
+    this.aoBlurBG = d.createBindGroup({ layout: this.aoBlurBGL, entries: [{ binding: 0, resource: this.aoRaw.createView() }, { binding: 1, resource: this.sceneColor.createView() }] });
+    this.resolveBGs = [0, 1].map((i) => d.createBindGroup({
+      layout: this.resolveBGL,
+      entries: [
+        { binding: 0, resource: this.hdr.createView() },
+        { binding: 1, resource: this.history[1 - i].createView() },
+        { binding: 2, resource: this.aoTex.createView() },
+        { binding: 3, resource: this.sceneColor.createView() },
+        { binding: 4, resource: this.linSampler },
+      ],
+    }));
+    this.expoBG = d.createBindGroup({
+      layout: this.expoBGL,
+      entries: [{ binding: 0, resource: { buffer: this.expoU } }, { binding: 1, resource: this.hdr.createView() }, { binding: 2, resource: { buffer: this.expoBuf } }],
+    });
     const rs = this.quality.reflections ? this.quality.reflScale : 0;
     const rw = rs ? Math.max(1, Math.floor(w * rs)) : 4, rh = rs ? Math.max(1, Math.floor(h * rs)) : 4;
     this.reflColor = d.createTexture({ size: [rw, rh], format: HDR, usage: RT });
@@ -577,8 +748,8 @@ export class Renderer {
       bh = Math.max(1, bh >> 1);
       this.bloom.push(d.createTexture({ size: [bw, bh], format: HDR, usage: RT }));
     }
-    for (const s of [this.slots.prefilter, this.slots.composite, this.slots.rays, ...this.slots.down, ...this.slots.up]) s?.buf.destroy();
-    const mk = (src: GPUTexture, bloomTex: GPUTexture = this.dummyTex, rays: GPUTexture = this.dummyTex): PostSlot => {
+    for (const s of [this.slots.prefilter, this.slots.rays, ...this.composites, ...this.slots.down, ...this.slots.up]) s?.buf.destroy();
+    const mk = (src: GPUTexture, bloomTex: GPUTexture = this.dummyTex, rays: GPUTexture = this.dummyTex, vol: GPUTexture = this.dummyTex): PostSlot => {
       const buf = d.createBuffer({ size: POST_FLOATS * 4, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
       const bg = d.createBindGroup({
         layout: this.postBGL,
@@ -588,6 +759,8 @@ export class Renderer {
           { binding: 2, resource: this.linSampler },
           { binding: 3, resource: bloomTex.createView() },
           { binding: 4, resource: rays.createView() },
+          { binding: 5, resource: vol.createView() },
+          { binding: 6, resource: { buffer: this.expoBuf } },
         ],
       });
       return { buf, bg };
@@ -596,23 +769,46 @@ export class Renderer {
       prefilter: mk(this.hdr),
       down: this.bloom.slice(1).map((_, i) => mk(this.bloom[i])),
       up: this.bloom.slice(0, -1).map((_, i) => mk(this.bloom[i + 1])),
-      composite: mk(this.hdr, this.bloom[0], this.raysTex),
       rays: mk(this.sceneColor),
     };
+    this.composites = this.history.map((hist) => mk(hist, this.bloom[0], this.raysTex, this.volTex));
     this.frame.width = w;
     this.frame.height = h;
     this.makeOceanGroup();
   }
 
   private writePost(slot: PostSlot, texelW: number, texelH: number) {
-    const p = this.post, o = this.postData;
+    const p = this.post, o = this.postData, f = this.frame, st = this.settings;
     o[0] = p.time; o[1] = p.underwater; o[2] = p.bloom; o[3] = p.exposure;
     o.set(p.flash, 4); o.set(p.fade, 8);
     o[12] = p.vignette; o[13] = p.saturation; o[14] = p.aberration; o[15] = p.threshold;
     o[16] = texelW; o[17] = texelH; o[18] = this.quality.rays ? p.rays * this.sunUV[2] : 0; o[19] = 0;
-    o[20] = this.sunUV[0]; o[21] = this.sunUV[1]; o[22] = 1; o[23] = 0;
+    o[20] = this.sunUV[0]; o[21] = this.sunUV[1]; o[22] = this.sunUV[2]; o[23] = p.flare;
     o[24] = p.contrast; o[25] = p.warmth; o[26] = p.grain; o[27] = p.warp;
+    o.set(this.waterline, 28);
+    o[32] = this.lens.drops; o[33] = this.lens.dropTime; o[34] = st.motionBlur; o[35] = st.autoExposure ? 1 : 0;
+    o[36] = f.uwColor[0]; o[37] = f.uwColor[1]; o[38] = f.uwColor[2];
+    o[39] = st.taa || this.renderScale < 0.99 ? st.sharpen * (this.renderScale < 0.99 ? 1.4 : 1) : 0;
+    o.set(this.cleanInv, 40);
+    o.set(f.prevViewProj, 56);
+    o[72] = f.camPos.x; o[73] = f.camPos.y; o[74] = f.camPos.z; o[75] = 0;
     this.device.queue.writeBuffer(slot.buf, 0, o);
+  }
+
+  /** The sea surface across a lens plane just in front of the camera (for the half-submerged view). */
+  private waterline = new Float32Array(4);
+  private cleanInv = mat4.create();
+  private updateWaterline() {
+    const f = this.frame, v = f.view, wl = this.waterline;
+    const D = 0.35;
+    const tanX = 1 / f.proj[0], tanY = 1 / f.proj[5];
+    // camera axes are the rows of the view matrix
+    const rightY = v[4], upY = v[5], fwdY = -v[6];
+    wl[0] = D * tanX * rightY;
+    wl[1] = D * tanY * upY;
+    wl[2] = f.camPos.y + D * fwdY - f.camWater;
+    const crosses = Math.abs(wl[2]) < Math.abs(wl[0]) + Math.abs(wl[1]) + 0.05;
+    wl[3] = crosses ? (f.cameraUnderwater > 0.5 ? -1 : 1) : 0;
   }
 
   // ------------------------------------------------------------------ per-frame setup
@@ -689,10 +885,30 @@ export class Renderer {
     f.cloudSteps = q.cloudSteps;
     f.planar = planar ? 1 : 0;
     f.clipReflect = 0;
+    f.aoStrength = q.ao ? 0.85 : 0;
+    f.contactShadows = q.contact ? 0.55 : 0;
+    f.pcss = q.pcss && q.shadows > 0 ? 1 : 0;
     if (q.shadows) this.updateShadows();
+    // unjittered camera for the sun, the waterline, reprojection and motion blur
+    mat4.multiply(f.viewProj, f.proj, f.view);
+    f.cleanViewProj.set(f.viewProj);
+    mat4.invert(this.cleanInv, f.viewProj);
     this.updateSun();
+    this.updateWaterline();
+    // sub-pixel jitter for temporal anti-aliasing (Halton 2,3)
+    const taa = this.settings.taa;
+    if (taa) {
+      const k = (this.frameIndex % 8) + 1;
+      f.jitterX = ((halton(k, 2) - 0.5) * 2) / this.width;
+      f.jitterY = ((halton(k, 3) - 0.5) * 2) / this.height;
+      const m = f.viewProj;
+      for (let c = 0; c < 4; c++) { m[c * 4] += f.jitterX * m[c * 4 + 3]; m[c * 4 + 1] += f.jitterY * m[c * 4 + 3]; }
+    } else f.jitterX = f.jitterY = 0;
+    mat4.invert(f.invViewProj, f.viewProj);
+    f.taa = taa && this.historyValid ? 1 : 0;
     f.pack(this.frameData);
     d.queue.writeBuffer(this.frameBuf, 0, this.frameData);
+    this.uploadLights();
     if (planar) {
       this.packReflection(this.reflColor.width, this.reflColor.height);
       d.queue.writeBuffer(this.reflBuf, 0, this.reflData);
@@ -731,14 +947,25 @@ export class Renderer {
     };
 
     const enc = d.createCommandEncoder();
+    // 0. sky-view LUT for the current sun, ocean waves (FFT cascades)
+    if (f.physSky > 0.001) this.atmo.update(enc, f.trueSun.y, f.camPos.y);
+    if (opts.ocean) this.fft.update(enc, f.time);
     // 1. clouds
-    if (q.clouds && f.cloudCover > 0.001) {
-      const p = enc.beginRenderPass({ colorAttachments: [{ view: this.cloudTex.createView(), loadOp: 'clear', storeOp: 'store', clearValue: [0, 0, 0, 1] }] });
+    if (q.clouds && (f.cloudCover > 0.001 || f.cirrus > 0.01)) {
+      const full = !this.cloudsFresh;
+      const p = enc.beginRenderPass({ colorAttachments: [{ view: this.cloudTex.createView(), loadOp: full ? 'clear' : 'load', storeOp: 'store', clearValue: [0, 0, 0, 1] }] });
       p.setPipeline(this.cloudPipe);
       p.setBindGroup(0, this.baseBG);
+      if (!full) {
+        const h = this.cloudTex.height, rows = Math.ceil(h / 3);
+        const y = this.cloudSlice * rows;
+        p.setScissorRect(0, y, this.cloudTex.width, Math.max(1, Math.min(rows, h - y)));
+        this.cloudSlice = (this.cloudSlice + 1) % 3;
+      }
       p.draw(3);
       p.end();
-    }
+      this.cloudsFresh = true;
+    } else this.cloudsFresh = false;
     // 2. shadow cascades
     for (let c = 0; c < q.shadows; c++) {
       const p = enc.beginRenderPass({
@@ -804,7 +1031,55 @@ export class Renderer {
     this.parts.count = 0;
     this.unlit.count = 0;
 
-    // 6. post
+    // 6. screen space: exposure meter, occlusion, temporal resolve
+    {
+      const now = performance.now();
+      const dt = this.lastRender ? Math.min(0.25, (now - this.lastRender) / 1000) : 0.016;
+      this.lastRender = now;
+      d.queue.writeBuffer(this.expoU, 0, new Float32Array([dt, 1.4, 0.65, 1.6, 0.3, 0, 0, 0]));
+      const cp = enc.beginComputePass({ label: 'exposure' });
+      cp.setPipeline(this.expoPipe);
+      cp.setBindGroup(0, this.expoBG);
+      cp.dispatchWorkgroups(1);
+      cp.end();
+    }
+    if (q.ao || q.contact) {
+      const a = enc.beginRenderPass({ colorAttachments: [{ view: this.aoRaw.createView(), loadOp: 'clear', storeOp: 'store', clearValue: [1, 1, 1, 1] }] });
+      a.setPipeline(this.aoPipe);
+      a.setBindGroup(0, this.frameBG);
+      a.setBindGroup(1, this.aoBG);
+      a.draw(3);
+      a.end();
+      const b = enc.beginRenderPass({ colorAttachments: [{ view: this.aoTex.createView(), loadOp: 'clear', storeOp: 'store', clearValue: [1, 1, 1, 1] }] });
+      b.setPipeline(this.aoBlurPipe);
+      b.setBindGroup(0, this.frameBG);
+      b.setBindGroup(1, this.aoBlurBG);
+      b.draw(3);
+      b.end();
+    } else {
+      enc.beginRenderPass({ colorAttachments: [{ view: this.aoTex.createView(), loadOp: 'clear', storeOp: 'store', clearValue: [1, 1, 1, 1] }] }).end();
+    }
+    const hi = this.histIdx;
+    {
+      const r = enc.beginRenderPass({ colorAttachments: [{ view: this.history[hi].createView(), loadOp: 'clear', storeOp: 'store', clearValue: [0, 0, 0, 1] }] });
+      r.setPipeline(this.resolvePipe);
+      r.setBindGroup(0, this.frameBG);
+      r.setBindGroup(1, this.resolveBGs[hi]);
+      r.draw(3);
+      r.end();
+    }
+
+    // 7. volumetric light, then post
+    {
+      const p = enc.beginRenderPass({ colorAttachments: [{ view: this.volTex.createView(), loadOp: 'clear', storeOp: 'store', clearValue: [0, 0, 0, 1] }] });
+      if (q.volumetric) {
+        p.setPipeline(this.volPipe);
+        p.setBindGroup(0, this.frameBG);
+        p.setBindGroup(1, this.volBG);
+        p.draw(3);
+      }
+      p.end();
+    }
     const blit = (pipe: GPURenderPipeline, target: GPUTexture, slot: PostSlot, load: boolean) => {
       const p = enc.beginRenderPass({ colorAttachments: [{ view: target.createView(), loadOp: load ? 'load' : 'clear', storeOp: 'store', clearValue: [0, 0, 0, 1] }] });
       p.setPipeline(pipe);
@@ -830,15 +1105,28 @@ export class Renderer {
       this.writePost(s.up[i], 1 / this.bloom[i + 1].width, 1 / this.bloom[i + 1].height);
       blit(this.upPipe, this.bloom[i], s.up[i], true);
     }
-    this.writePost(s.composite!, 1 / this.width, 1 / this.height);
+    const comp = this.composites[hi];
+    this.writePost(comp, 1 / this.outW, 1 / this.outH);
     const swap = this.ctx.context.getCurrentTexture();
     const p = enc.beginRenderPass({ colorAttachments: [{ view: swap.createView(), loadOp: 'clear', storeOp: 'store', clearValue: [0, 0, 0, 1] }] });
     p.setPipeline(this.compositePipe);
-    p.setBindGroup(0, s.composite!.bg);
+    p.setBindGroup(0, comp.bg);
     p.draw(3);
     p.end();
     d.queue.submit([enc.finish()]);
+    if (opts.ocean) this.fft.afterSubmit();
+    f.prevViewProj.set(f.cleanViewProj);
+    this.historyValid = true;
+    this.histIdx = 1 - hi;
+    this.frameIndex++;
   }
+}
+
+/** Low-discrepancy sequence for sub-pixel jitter. */
+function halton(i: number, b: number) {
+  let f = 1, r = 0;
+  while (i > 0) { f /= b; r += f * (i % b); i = Math.floor(i / b); }
+  return r;
 }
 
 /** float32 -> IEEE half, for r16float uploads. */

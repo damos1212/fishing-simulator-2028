@@ -24,6 +24,13 @@ export class Boat {
   armTarget = 0;
   rodBend = 0.15;
   rodTip = new Vec3();
+  /** Wind-sea heights under bow, stern, port and starboard, read back from the GPU ocean. */
+  fft = [0, 0, 0, 0];
+  /** Where to sample those four heights (updated each frame). */
+  hullPoints() {
+    const s = Math.sin(this.heading), c = Math.cos(this.heading), p = this.pos;
+    return [{ x: p.x + s * 3, z: p.z + c * 3 }, { x: p.x - s * 3, z: p.z - c * 3 }, { x: p.x + c * 1.3, z: p.z - s * 1.3 }, { x: p.x - c * 1.3, z: p.z + s * 1.3 }];
+  }
   hull = 0;
   radar = false;
   lamp = false;
@@ -37,17 +44,19 @@ export class Boat {
   pet = '';
   petBounce = 0;
   anchored = false;
+  /** Pulled under by something (the Kraken), in metres. */
+  sink = 0;
   bumped = 0;
   private wakeT = 0;
   private wakeIdx = 0;
   wake = new Float32Array(64);
   private insts = {
     boat: Inst.solid(4, 0.035),
-    radar: Inst.solid(0, 0.02),
-    lamp: Inst.solid(0, 0.02),
-    fisher: Inst.solid(0, 0.02),
-    rod: Inst.solid(0, 0.25),
-    reel: Inst.solid(0, 0.1),
+    radar: Inst.solid(0, 0.02, true),
+    lamp: Inst.solid(0, 0.02, true),
+    fisher: Inst.solid(0, 0.02, true),
+    rod: Inst.solid(0, 0.25, true),
+    reel: Inst.solid(0, 0.1, true),
   };
   private m = { fisher: mat4.create(), arms: mat4.create(), socket: mat4.create(), seg: mat4.create(), tmp: mat4.create(), tmp2: mat4.create(), radar: mat4.create() };
 
@@ -81,12 +90,13 @@ export class Boat {
 
     // buoyancy from the same waves the ocean shader draws
     const s = Math.sin(this.heading), c = Math.cos(this.heading);
-    const hb = waveHeight(this.pos.x + s * 3, this.pos.z + c * 3, time, waveScale);
-    const hs = waveHeight(this.pos.x - s * 3, this.pos.z - c * 3, time, waveScale);
-    const hp = waveHeight(this.pos.x + c * 1.3, this.pos.z - s * 1.3, time, waveScale);
-    const hst = waveHeight(this.pos.x - c * 1.3, this.pos.z + s * 1.3, time, waveScale);
+    const f = this.fft;
+    const hb = waveHeight(this.pos.x + s * 3, this.pos.z + c * 3, time, waveScale) + f[0];
+    const hs = waveHeight(this.pos.x - s * 3, this.pos.z - c * 3, time, waveScale) + f[1];
+    const hp = waveHeight(this.pos.x + c * 1.3, this.pos.z - s * 1.3, time, waveScale) + f[2];
+    const hst = waveHeight(this.pos.x - c * 1.3, this.pos.z + s * 1.3, time, waveScale) + f[3];
     const sp = Math.abs(this.speed) / Math.max(maxSpeed, 1);
-    this.y = damp(this.y, (hb + hs + hp + hst) / 4 - 0.05 + sp * 0.25, 8, dt);
+    this.y = damp(this.y, (hb + hs + hp + hst) / 4 - 0.05 + sp * 0.25 - this.sink, 8, dt);
     this.pitch = damp(this.pitch, Math.atan2(hs - hb, 6) - sp * 0.07, 6, dt);
     this.roll = damp(this.roll, Math.atan2(hp - hst, 2.6) - this.steer * sp * 0.12, 5, dt);
     this.pos.y = this.y;
@@ -209,7 +219,7 @@ export class Boat {
   }
 }
 
-const flameInst = Inst.solid(2);
+const flameInst = Inst.solid(2, 0, true);
 flameInst.a.set([1, 0.55, 0.15, 5]);
 /** Where each pet sits on the boat (boat-local, +Z is the bow). */
 const PET_SPOT: Record<string, [number, number, number]> = {

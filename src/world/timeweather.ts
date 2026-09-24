@@ -85,6 +85,12 @@ export class TimeWeather {
   /** Near sunrise/sunset. */
   get dusk() { return 1 - smoothstep(0.0, 0.35, Math.abs(this.sunElevation + 0.05)); }
 
+  /** Direction towards the sun, also when it is below the horizon (for the atmosphere). */
+  trueSun(out: Vec3) {
+    const a = (this.dayTime - 0.25) * Math.PI * 2;
+    return out.set(Math.cos(a) * 0.75, Math.sin(a), -0.45).normalize();
+  }
+
   /** Direction towards the main light (sun by day, moon by night). */
   lightDir(out: Vec3) {
     const a = (this.dayTime - 0.25) * Math.PI * 2;

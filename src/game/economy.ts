@@ -1,6 +1,7 @@
 // Pure game rules (no rendering): stats, prices, catches, save data. Unit tested.
 import { CATCHABLE, SPECIES, speciesById, type Species, type WeatherKind } from '../data/fish';
 import { COSMETICS, cosmeticById, type CosmeticKind, DEFAULT_COSMETICS, ITEMS, type ItemId } from '../data/items';
+import { type PerkId, perkById, PERKS } from '../data/perks';
 import { TRACKS, trackById, type Stats, type TrackId } from '../data/upgrades';
 import { ALL_ZONES, type RealmId, REALMS, type ZoneId } from '../data/zones';
 import type { Contract } from './progress';
@@ -10,7 +11,13 @@ export interface CaughtFish {
   /** size multiplier (1 = average) */
   size: number;
   value: number;
+  /** rare colour variant, worth SHINY_VALUE times more */
+  shiny?: boolean;
 }
+
+/** Chance that a spawned fish is a shiny variant (before boosts), and its value multiplier. */
+export const SHINY_CHANCE = 1 / 110;
+export const SHINY_VALUE = 8;
 
 export interface SaveStats {
   casts: number; caught: number; earned: number; deepest: number; snapped: number;
@@ -18,7 +25,8 @@ export interface SaveStats {
   boots: number; bottles: number; ducks: number; treasures: number; contracts: number;
   upgrades: number; stolen: number; stung: number; maxHaul: number; bestCast: number; travels: number;
   itemsUsed: number; cosmetics: number; playTime: number;
-  maps: number; fragments: number; perfect: number; events: number; realmJumps: number; bestCombo: number;
+  maps: number; fragments: number; perfect: number; events: number; realmJumps: number; bestCombo: number; orbs: number;
+  shinies: number; krakens: number; bloodMoons: number; tourneys: number; tourneyWins: number;
 }
 
 export interface SaveData {
@@ -27,9 +35,10 @@ export interface SaveData {
   pearls: number;
   upgrades: Record<TrackId, number>;
   cooler: CaughtFish[];
-  dex: Record<string, { caught: number; best: number }>;
+  dex: Record<string, { caught: number; best: number; shiny?: number }>;
   stats: SaveStats;
-  settings: { music: number; sfx: number; sensitivity: number; invertY: boolean; quality: number; shake: boolean; fps: boolean; graphics: number };
+  settings: { music: number; sfx: number; sensitivity: number; invertY: boolean; quality: number; shake: boolean; fps: boolean; graphics: number; summaries: 'big' | 'always';
+    taa: boolean; motionBlur: boolean; autoExposure: boolean };
   boat: { x: number; z: number; heading: number } | null;
   seenZones: ZoneId[];
   tutorial: number;
@@ -49,12 +58,15 @@ export interface SaveData {
   /** Realm the boat is in, and the realms whose rift has been crossed. */
   realm: RealmId;
   realms: RealmId[];
+  /** Angler perk ranks bought with pearls. */
+  perks: Partial<Record<PerkId, number>>;
 }
 
 const newStats = (): SaveStats => ({
   casts: 0, caught: 0, earned: 0, deepest: 0, snapped: 0, legendaries: 0, bosses: 0, night: 0, storm: 0, rain: 0,
   boots: 0, bottles: 0, ducks: 0, treasures: 0, contracts: 0, upgrades: 0, stolen: 0, stung: 0, maxHaul: 0, bestCast: 0,
-  travels: 0, itemsUsed: 0, cosmetics: 0, playTime: 0, maps: 0, fragments: 0, perfect: 0, events: 0, realmJumps: 0, bestCombo: 0,
+  travels: 0, itemsUsed: 0, cosmetics: 0, playTime: 0, maps: 0, fragments: 0, perfect: 0, events: 0, realmJumps: 0, bestCombo: 0, orbs: 0,
+  shinies: 0, krakens: 0, bloodMoons: 0, tourneys: 0, tourneyWins: 0,
 });
 
 export function newSave(): SaveData {
@@ -70,7 +82,7 @@ export function newSave(): SaveData {
     cooler: [],
     dex: {},
     stats: newStats(),
-    settings: { music: 0.5, sfx: 0.8, sensitivity: 1, invertY: false, quality: 1, shake: true, fps: false, graphics: 2 },
+    settings: { music: 0.5, sfx: 0.8, sensitivity: 1, invertY: false, quality: 1, shake: true, fps: false, graphics: 2, summaries: 'big', taa: true, motionBlur: true, autoExposure: true },
     boat: null,
     seenZones: [],
     tutorial: 0,
@@ -89,6 +101,7 @@ export function newSave(): SaveData {
     treasureMap: null,
     realm: 'blue',
     realms: ['blue'],
+    perks: {},
   };
 }
 
@@ -122,8 +135,35 @@ export function migrateSave(raw: unknown): SaveData {
     realms: Array.isArray(r.realms) ? ['blue' as RealmId, ...r.realms.filter((x) => x !== 'blue' && REALMS.some((z) => z.id === x))] : ['blue'],
     realm: REALMS.some((z) => z.id === r.realm) && (r.realm === 'blue' || r.realms?.includes(r.realm!)) ? r.realm! : 'blue',
     treasureMap: r.treasureMap && ALL_ZONES.some((z) => z.id === r.treasureMap!.zone) ? r.treasureMap : null,
+    perks: Object.fromEntries(Object.entries(r.perks ?? {}).filter(([id, v]) => perkById.has(id as PerkId) && typeof v === 'number')
+      .map(([id, v]) => [id, Math.max(0, Math.min(v as number, perkById.get(id as PerkId)!.costs.length))])),
   };
 }
+
+export const perkRank = (save: SaveData, id: PerkId) => save.perks[id] ?? 0;
+/** Current effect of a perk (see data/perks.ts). */
+export function perkValue(save: SaveData, id: PerkId) {
+  const p = perkById.get(id)!;
+  return p.values[Math.min(perkRank(save, id), p.values.length - 1)];
+}
+/** Pearl price of the next rank, or null when maxed. */
+export function perkCost(save: SaveData, id: PerkId) {
+  const p = perkById.get(id)!;
+  const r = perkRank(save, id);
+  return r < p.costs.length ? p.costs[r] : null;
+}
+export function perkUnlocked(save: SaveData, id: PerkId) {
+  const need = perkById.get(id)!.needs;
+  return !need || perkRank(save, need) > 0;
+}
+export function buyPerk(save: SaveData, id: PerkId): boolean {
+  const c = perkCost(save, id);
+  if (c === null || save.pearls < c || !perkUnlocked(save, id)) return false;
+  save.pearls -= c;
+  save.perks[id] = perkRank(save, id) + 1;
+  return true;
+}
+export const perkTotal = (save: SaveData) => PERKS.reduce((n, p) => n + perkRank(save, p.id), 0);
 
 export function computeStats(upgrades: Record<TrackId, number>): Stats {
   const s = {} as Stats;
@@ -202,8 +242,10 @@ export function fishValue(sp: Species, size: number) {
   return Math.max(1, Math.round(sp.value * Math.pow(size, 1.6)));
 }
 
-export function catchFish(sp: Species, size: number, golden = false, bonus = 1): CaughtFish {
-  return { id: sp.id, size, value: Math.round(fishValue(sp, size) * (golden ? 2 : 1) * bonus) };
+export function catchFish(sp: Species, size: number, golden = false, bonus = 1, shiny = false): CaughtFish {
+  const f: CaughtFish = { id: sp.id, size, value: Math.round(fishValue(sp, size) * (golden ? 2 : 1) * bonus * (shiny ? SHINY_VALUE : 1)) };
+  if (shiny) f.shiny = true;
+  return f;
 }
 
 /** Zones whose whole fish log is complete (bosses and junk excluded): their fish sell for more. */
@@ -233,6 +275,8 @@ export interface CatchContext {
 }
 
 export interface LandResult {
+  /** species caught as a shiny for the first time */
+  newShiny: string[];
   kept: CaughtFish[];
   released: CaughtFish[];
   newSpecies: string[];
@@ -243,7 +287,7 @@ export interface LandResult {
 
 /** Puts a cast's catch into the cooler, updating the fish log and lifetime stats. */
 export function landCatch(save: SaveData, fish: CaughtFish[], coolerSize: number, ctx?: CatchContext): LandResult {
-  const res: LandResult = { kept: [], released: [], newSpecies: [], records: [], pearls: 0, value: 0 };
+  const res: LandResult = { newShiny: [], kept: [], released: [], newSpecies: [], records: [], pearls: 0, value: 0 };
   for (const f of fish) {
     const sp = speciesById.get(f.id);
     const e = save.dex[f.id] ?? { caught: 0, best: 0 };
@@ -251,6 +295,11 @@ export function landCatch(save: SaveData, fish: CaughtFish[], coolerSize: number
     else if (f.size > e.best && !res.newSpecies.includes(f.id) && !res.records.includes(f.id)) res.records.push(f.id);
     e.caught++;
     e.best = Math.max(e.best, f.size);
+    if (f.shiny) {
+      if (!e.shiny) res.newShiny.push(f.id);
+      e.shiny = (e.shiny ?? 0) + 1;
+      save.stats.shinies++;
+    }
     save.dex[f.id] = e;
     const st = save.stats;
     st.caught++;

@@ -51,14 +51,21 @@ function seabedRocks(sc: Scenery, zones: string[], n: number, color: string, see
 
 function crystals(sc: Scenery, zones: string[], n: number, color: string, glow: number, seed: number, above = false) {
   const inst = sc.tint(color, 0.04, glow);
+  const lc = inst.a;
+  const col: [number, number, number] = [lc[0] / 1.3, lc[1] / 1.3, lc[2] / 1.3];
+  let k = 0;
   for (const id of zones) {
     sc.scatter(zi(id), n, seed + zi(id), (x, z, h, r) => {
       if (above) {
         if (h < 1) return;
-        sc.add(sc.a.models.crystal, x, h - 0.5, z, r() * 6.28, 2 + r() * 4, inst, 2200, false, (r() - 0.5) * 0.5, (r() - 0.5) * 0.5);
+        const s = 2 + r() * 4;
+        sc.add(sc.a.models.crystal, x, h - 0.5, z, r() * 6.28, s, inst, 2200, false, (r() - 0.5) * 0.5, (r() - 0.5) * 0.5);
+        sc.addLight(x, h + s, z, 18 + s * 3, col, glow * 1.4, false, 0.1);
       } else {
         if (h > -4) return;
-        sc.add(sc.a.models.crystal, x, h, z, r() * 6.28, 1.5 + r() * 3, inst, 220, true);
+        const s = 1.5 + r() * 3;
+        sc.add(sc.a.models.crystal, x, h, z, r() * 6.28, s, inst, 220, true);
+        if (glow > 0.7 && k++ % 3 === 0) sc.addLight(x, h + s * 1.5, z, 14 + s * 3, col, glow * 1.2, false, 0.1);
       }
     });
   }
@@ -97,6 +104,7 @@ function jurassic(sc: Scenery) {
   const rock = sc.tint('#6a6a50', 0.06);
   for (const isl of ISLANDS) {
     if (isl.kind === 'jungle') {
+      sc.meadow(isl, 1, 0.04, 0.08);
       onIsland(isl, Math.round(isl.r / 5), isl.seed, 1.2, (x, z, h, r) => {
         const p = sc.add(models.fern, x, h - 0.3, z, r() * 6.28, 0.7 + r() * 0.8, fern, 2200);
         p.phaseSpeed = 0.5;
@@ -172,7 +180,9 @@ function shattered(sc: Scenery) {
       sc.add(models.rock, x, h - 0.6, z, r() * 6.28, 2 + r() * 4, k === 'hellfire' ? hellRock : felRock, 2400);
     });
     onIsland(isl, Math.round(isl.r / 18), isl.seed + 9, 3, (x, z, h, r) => {
-      sc.add(models.crystal, x, h - 0.5, z, r() * 6.28, 3 + r() * 4, sc.tint('#70ff40', 0.04, 1.3), 2800, false, (r() - 0.5) * 0.4, (r() - 0.5) * 0.4);
+      const s = 3 + r() * 4;
+      sc.add(models.crystal, x, h - 0.5, z, r() * 6.28, s, sc.tint('#70ff40', 0.04, 1.3), 2800, false, (r() - 0.5) * 0.4, (r() - 0.5) * 0.4);
+      sc.addLight(x, h + s, z, 30 + s * 3, [0.4, 1, 0.25], 2, false, 0.15);
     });
   }
   // jagged spires rising from the hellfire shallows
@@ -239,6 +249,7 @@ function neon(sc: Scenery) {
   const palmGlow = models.neonprops.byName.get('PalmGlow')!;
   for (const isl of ISLANDS) {
     if (isl.kind !== 'neon') continue;
+    sc.meadow(isl, 3, 0.03, 0);
     onIsland(isl, Math.round(isl.r / 6), isl.seed, 1.0, (x, z, h, r) => {
       const p = sc.add(palm, x, h - 0.2, z, r() * 6.28, 0.8 + r() * 0.5, chrome, 2400);
       sc.twin(p, palmGlow, palmGlows[Math.floor(r() * 3)]);
@@ -281,7 +292,9 @@ function maw(sc: Scenery) {
     if (isl.kind !== 'asteroid') continue;
     onIsland(isl, Math.round(isl.r / 8), isl.seed, 1, (x, z, h, r) => sc.add(models.rock, x, h - 0.6, z, r() * 6.28, 2 + r() * 4, asteroid, 2400));
     onIsland(isl, Math.round(isl.r / 16), isl.seed + 4, 2, (x, z, h, r) => {
-      sc.add(models.crystal, x, h - 0.4, z, r() * 6.28, 2 + r() * 3, sc.tint('#ff9a40', 0.03, 1.4), 2600);
+      const s = 2 + r() * 3;
+      sc.add(models.crystal, x, h - 0.4, z, r() * 6.28, s, sc.tint('#ff9a40', 0.03, 1.4), 2600);
+      sc.addLight(x, h + s, z, 22 + s * 3, [1, 0.55, 0.2], 2, false, 0.15);
     });
   }
   floatingRocks(sc, ['rim', 'maw'], 22, 701, ember, '#3a3040', 20, 140);

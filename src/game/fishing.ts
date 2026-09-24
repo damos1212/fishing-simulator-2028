@@ -8,7 +8,7 @@ import { Inst, type Renderer } from '../engine/renderer';
 import { waveHeight } from '../world/environment';
 import { heightAt } from '../world/terrain';
 import type { Assets } from './assets';
-import { catchFish, type CaughtFish, MASTERY_BONUS, pickSpecies, rollSize, zonePool } from './economy';
+import { catchFish, type CaughtFish, MASTERY_BONUS, pickSpecies, rollSize, SHINY_CHANCE, zonePool } from './economy';
 
 export type FishingState = 'idle' | 'aim' | 'flight' | 'under' | 'landing' | 'retrieve';
 
@@ -56,16 +56,25 @@ export class FishActor {
     this.inst.b.set([b[0], b[1], b[2], sp.pattern ?? 0]);
     this.inst.c.set([c[0], c[1], c[2], ANIM[sp.model]]);
     if (sp.model === 'angler' || sp.glow) {
-      this.glowInst = Inst.solid(2);
+      this.glowInst = Inst.solid(2, 0, true);
       this.glowInst.a.set([c[0], c[1], c[2], 4]);
     }
+  }
+  shiny = false;
+  /** Turns this fish into its rare shiny variant: shifted colours, rainbow sheen, a soft glow. */
+  makeShiny() {
+    this.shiny = true;
+    const rot = (c: Float32Array) => { const [r, g, b] = [c[0], c[1], c[2]]; c[0] = g * 0.9 + 0.1; c[1] = b * 0.9 + 0.1; c[2] = r * 0.9 + 0.1; };
+    rot(this.inst.a); rot(this.inst.b); rot(this.inst.c);
+    this.inst.b[3] = (this.sp.pattern ?? 0) + 16;
+    this.inst.a[3] = Math.max(this.inst.a[3], 0.12);
   }
   get kg() { return this.sp.kg * this.size * this.size; }
   /** Visual/collision length (cartoon-exaggerated). */
   get length() { return this.sp.size * this.size * (this.sp.boss ? 1 : 1.5); }
 }
 
-const eyeInst = Inst.solid(0, 0);
+const eyeInst = Inst.solid(0, 0, true);
 /** Power meter sweet spot for a perfect cast. */
 export const PERFECT: [number, number] = [0.86, 0.97];
 
@@ -95,6 +104,11 @@ export interface FishingContext {
   rareBoost: number;
   /** zones whose fish log is complete sell for more */
   mastered: Set<ZoneId>;
+  /** shiny spawn multiplier (perks, blood moon), catch value multiplier, dive speed bonus, fight tension relief */
+  shinyBoost: number;
+  valueBonus: number;
+  diveBoost: number;
+  grip: number;
 }
 
 export class Fishing {
@@ -123,7 +137,7 @@ export class Fishing {
   private lastNeedBait = 0;
   private stingCooldown = 0;
   private lureInst = Inst.solid(1, 0.02);
-  private hookInst = Inst.solid(0, 0.01);
+  private hookInst = Inst.solid(0, 0.01, true);
   private m = mat4.create();
   private w: number[] = [];
   reeling = false;
@@ -268,13 +282,16 @@ export class Fishing {
     const target = Math.round(34 * (1 + ctx.hotspot * 0.7) * (1 + chum));
     const boost = (1 + ctx.hotspot * 2.5) * (ctx.lucky ? 3 : 1) * (this.perfect ? 2 : 1) * ctx.rareBoost;
     let tries = 0;
+    // while diving fast, new fish appear ahead (below) the lure so the descent is never empty
+    const diving = this.lureVel.y < -4;
     while (this.fish.length < target && tries++ < 60) {
       const ang = this.rand() * Math.PI * 2;
-      const d = initial ? 4 + this.rand() * 36 : 38 + this.rand() * 18;
+      const d = initial ? 4 + this.rand() * 36 : diving ? 8 + this.rand() * 34 : 38 + this.rand() * 18;
       const x = this.lure.x + Math.cos(ang) * d, z = this.lure.z + Math.sin(ang) * d;
       const floor = heightAt(x, z);
       if (floor > -2.5) continue;
-      let y = clamp(this.lure.y + (this.rand() - 0.5) * 60, floor + 1.2, -1.2);
+      const ahead = diving ? this.lureVel.y * (1.2 + this.rand() * 1.4) : 0;
+      let y = clamp(this.lure.y + ahead + (this.rand() - 0.5) * (diving ? 30 : 60), floor + 1.2, -1.2);
       const pool = zonePool(this.pickZone(x, z));
       const sp = pickSpecies(pool, -y, this.rand, boost, { night: ctx.night, weather: ctx.weather });
       if (!sp) continue;
@@ -283,6 +300,7 @@ export class Fishing {
       let leader: FishActor | null = null;
       for (let k = 0; k < n; k++) {
         const f = new FishActor(sp, rollSize(this.rand));
+        if (!sp.junk && !sp.boss && this.rand() < SHINY_CHANCE * ctx.shinyBoost * (ctx.lucky ? 2 : 1)) f.makeShiny();
         f.pos.set(x + (this.rand() - 0.5) * 3, clamp(y + (this.rand() - 0.5) * 2, floor + 0.3, -1), z + (this.rand() - 0.5) * 3);
         f.dir.set(this.rand() - 0.5, 0, this.rand() - 0.5).normalize();
         f.target.copy(f.pos);
@@ -323,7 +341,7 @@ export class Fishing {
       const counter = ctx.move.x !== 0 ? (Math.sign(ctx.move.x) === -f.pull ? 1 : -1) : 0;
       this.countering = counter;
       const gain = counter > 0 ? 0.45 : counter < 0 ? 1.6 : 1;
-      if (ctx.reel) this.tension += dt * (0.22 + 0.5 * pw) * gain;
+      if (ctx.reel) this.tension += dt * (0.22 + 0.5 * pw) * gain * (1 - ctx.grip);
       else this.tension -= dt * 0.75;
       this.tension = Math.max(0, this.tension);
       const bossTough = f.sp.boss ? 3.2 : 1;
@@ -357,7 +375,7 @@ export class Fishing {
     }
 
     this.reeling = ctx.reel;
-    if (ctx.dive) desired.y -= s.diveSpeed * slow;
+    if (ctx.dive) desired.y -= s.diveSpeed * slow * (1 + ctx.diveBoost);
     else if (ctx.reel) desired.addScaled(toTip.clone().normalize(), s.reelSpeed * reelMul * en);
     else desired.y -= 1.2;
     this.lureVel.damp(desired, 5, dt);
@@ -397,7 +415,7 @@ export class Fishing {
   }
 
   private finish(ctx: FishingContext) {
-    this.land.catches = this.hooked.map((f) => catchFish(f.sp, f.size, ctx.golden, ctx.mastered.has(f.sp.zone) ? MASTERY_BONUS : 1));
+    this.land.catches = this.hooked.map((f) => catchFish(f.sp, f.size, ctx.golden, (ctx.mastered.has(f.sp.zone) ? MASTERY_BONUS : 1) * ctx.valueBonus, f.shiny));
     this.land.from.copy(this.lure);
     this.flightT = 0;
     this.state = 'landing';
@@ -445,7 +463,7 @@ export class Fishing {
       f.cooldown -= dt;
       tmp.copy(lure).sub(f.pos);
       const dist = tmp.length();
-      if (dist > (f.sp.boss ? 200 : 72)) { f.gone = true; continue; }
+      if (dist > (f.sp.boss ? 200 : 72) || (this.lureVel.y < -4 && f.pos.y > lure.y + 30 && !f.sp.boss)) { f.gone = true; continue; }
       let speed = f.speed;
       const sp = f.sp;
       const reach = 0.55 + f.length * 0.35;
@@ -581,6 +599,11 @@ export class Fishing {
 
   drawFish(r: Renderer, a: Assets, f: FishActor, up: Vec3) {
     const model = a.fish[f.sp.model];
+    if (f.shiny && Math.random() < 0.35) {
+      const k = (Math.random() - 0.5) * f.length;
+      r.particle(f.pos.x + f.dir.x * k + (Math.random() - 0.5) * 0.4, f.pos.y + (Math.random() - 0.3) * 0.5, f.pos.z + f.dir.z * k + (Math.random() - 0.5) * 0.4,
+        0.25 + Math.random() * 0.25, 1.4, 1.2, 1.6, 0, 3, Math.random() * 6);
+    }
     const d = f.dir.clone();
     let u = up;
     if (f.sp.upright) { d.set(f.dir.x, 0, f.dir.z); if (d.length() < 0.01) d.set(0, 0, 1); }

@@ -1,5 +1,6 @@
 // Shared WGSL: the Frame uniform (layout mirrors FrameState in frame.ts), noise, clouds,
 // shadows, sky color and the stylized-PBR lighting used by every lit surface.
+import { ATMO_LOOKUP } from './atmosphere';
 
 export const COMMON = /* wgsl */ `
 struct Frame {
@@ -33,12 +34,22 @@ struct Frame {
   fx: vec4f,           // reflection clip (1 in the mirrored pass), aurora, neon, vortex
   water: vec4f,        // absorption per meter, planar reflections (0/1), foam amount, detail normal strength
   cloud: vec4f,        // base height, thickness, density, volumetric (0/1)
-  extra: vec4f,        // cloud march steps, god ray strength, realm style, low gravity
+  extra: vec4f,        // cloud march steps, god ray strength, rainbow, low gravity
   planetA: vec4f,      // direction, angular radius
   planetAC: vec4f,     // tint, style (1 earth, 2 gas giant, 3 cracked fel world, 4 moon, 5 ringed)
   planetB: vec4f,
   planetBC: vec4f,
   wake: array<vec4f, 16>, // x, z, age (s), strength
+  prevViewProj: mat4x4f, // last frame, unjittered
+  taa: vec4f,          // jitter x, y (NDC), temporal AA on, unused
+  surf: vec4f,         // water height at the camera, lens droplets, motion blur, unused
+  whaleA: vec4f,       // x, z, heading, strength
+  whaleB: vec4f,
+  atmo: vec4f,         // physical sky weight, cirrus, sky exposure, weather grey
+  trueSun: vec4f,      // sun direction (also below the horizon)
+  shore: vec4f,        // breakers, swash reach, wet sand
+  ssao: vec4f,         // ao strength, contact shadows, soft shadows (0/1), sun size
+  debug: vec4f,       // developer view
 };
 @group(0) @binding(0) var<uniform> frame: Frame;
 @group(0) @binding(1) var noiseTex: texture_3d<f32>;
@@ -48,9 +59,22 @@ struct Frame {
 @group(0) @binding(5) var cloudTex: texture_2d<f32>;
 @group(0) @binding(6) var clampSamp: sampler;
 @group(0) @binding(7) var detailTex: texture_2d<f32>;
+struct PointLight { pos: vec4f, col: vec4f };
+struct LightList { count: vec4f, items: array<PointLight, 32> };
+@group(0) @binding(8) var<storage, read> lights: LightList;
+@group(0) @binding(9) var skyViewTex: texture_2d<f32>;
 
 const PI = 3.14159265;
 const SKY_DIST = 60000.0;
+${ATMO_LOOKUP}
+/** Physically based sky radiance (Hillaire) in game units, greyed in bad weather. */
+fn physSky(dir: vec3f) -> vec3f {
+  let uv = skyViewUV(dir, frame.trueSun.xyz, clamp(frame.camPos.y, 1.0, 2000.0) * 0.001);
+  let c0 = textureSampleLevel(skyViewTex, clampSamp, uv, 0.0).rgb * frame.atmo.z;
+  // soft shoulder: keeps the deep zenith blue while taming the very bright horizon
+  let c = c0 / (1.0 + dot(c0, vec3f(0.2126, 0.7152, 0.0722)) * 0.7);
+  return mix(c, vec3f(dot(c, vec3f(0.2126, 0.7152, 0.0722))) * vec3f(0.95, 0.98, 1.04), frame.atmo.w);
+}
 
 fn hash21(p: vec2f) -> f32 {
   var q = fract(p * vec2f(123.34, 456.21));
@@ -121,6 +145,28 @@ fn causticsRGB(wp: vec3f) -> vec3f {
   let p = proj * (0.028 / (1.0 + depth * 0.004));
   let off = vec2f(0.0016, 0.0011) * (1.0 + depth * 0.02);
   return clamp(vec3f(causticAt(p + off, t), causticAt(p, t), causticAt(p - off, t)), vec3f(0.0), vec3f(1.6));
+}
+
+// ---------------------------------------------------------------- surf
+/** Surf cycle at a point (0..1); a breaker reaches the beach as it wraps. Smooth trig only, mirrored on the CPU. */
+fn surfPhase(xz: vec2f, t: f32) -> f32 {
+  let a = sin(xz.x * 0.011 + sin(xz.y * 0.0071) * 1.3) * 0.25 + sin(xz.y * 0.013 - xz.x * 0.0043) * 0.2;
+  return fract(t * 0.085 + a);
+}
+/** Swash sheet running up the sand after each breaker (0..1 of the run-up height). */
+fn swashLift(ph: f32) -> f32 {
+  let r = fract(ph + 0.08);
+  return smoothstep(0.0, 0.07, r) * (1.0 - smoothstep(0.07, 0.5, r));
+}
+/** Sand that the swash just left glistens, then dries (0..1). */
+fn sandGlisten(wp: vec3f) -> f32 {
+  let peak = 0.34 * frame.shore.y;
+  if (peak <= 0.0 || wp.y > peak || wp.y < -0.3) { return 0.0; }
+  let r = fract(surfPhase(wp.xz, frame.camPos.w) + 0.08);
+  let yr = clamp(wp.y / peak, 0.0, 1.0);
+  let off = 0.07 + 0.36 * (1.0 - yr);
+  let since = fract(r - off);
+  return select(exp(-since * 7.0), 1.0, r > 0.03 && r < off) * frame.shore.z;
 }
 
 fn underwaterness(y: f32) -> f32 { return smoothstep(0.3, -1.2, y); }
@@ -256,6 +302,12 @@ fn skyColor(dir: vec3f, withSun: bool) -> vec3f {
   let night = frame.mapInfo.z;
   // forward scattering glow around the sun
   col += frame.sunColor.rgb * (pow(max(sd, 0.0), 10.0) * 0.22 + pow(max(sd, 0.0), 90.0) * 0.5) * (1.0 - night * 0.7);
+  // blend towards the physically based atmosphere (zone palettes keep their say in fantasy places)
+  let pw = frame.atmo.x * (1.0 - night) * smoothstep(-0.12, 0.0, y);
+  if (pw > 0.001) {
+    let pb = physSky(normalize(vec3f(dir.x, max(y, -0.02), dir.z)));
+    col = mix(col, pb + frame.sunColor.rgb * pow(max(sd, 0.0), 90.0) * 0.3, pw);
+  }
   if (frame.skyTop.w > 0.001) {
     col += vec3f(starField(dir, t)) * frame.skyTop.w * smoothstep(-0.05, 0.1, y);
   }
@@ -277,13 +329,28 @@ fn skyColor(dir: vec3f, withSun: bool) -> vec3f {
   }
   col = skyPlanet(dir, frame.planetA, frame.planetAC, col);
   col = skyPlanet(dir, frame.planetB, frame.planetBC, col);
+  // rainbow opposite the sun after a shower
+  if (frame.extra.z > 0.01 && y > -0.02) {
+    let anti = -frame.sunDir.xyz;
+    let ang = acos(clamp(dot(dir, anti), -1.0, 1.0));
+    let x = (ang - 0.69) / 0.05;
+    if (x > 0.0 && x < 1.0) {
+      let rb = clamp(abs(fract(0.75 - x * 0.8 + vec3f(0.0, 0.667, 0.333)) * 6.0 - 3.0) - 1.0, vec3f(0.0), vec3f(1.0));
+      col += rb * sin(x * PI) * 0.32 * frame.extra.z * smoothstep(-0.02, 0.12, y);
+    }
+    let x2 = (ang - 0.88) / 0.07;
+    if (x2 > 0.0 && x2 < 1.0) {
+      let rb2 = clamp(abs(fract(0.75 - (1.0 - x2) * 0.8 + vec3f(0.0, 0.667, 0.333)) * 6.0 - 3.0) - 1.0, vec3f(0.0), vec3f(1.0));
+      col += rb2 * sin(x2 * PI) * 0.1 * frame.extra.z * smoothstep(-0.02, 0.12, y);
+    }
+  }
   var sunDisc = vec3f(0.0);
   if (withSun) {
     let disc = mix(smoothstep(0.9993, 0.9996, sd), smoothstep(0.9986, 0.9990, sd), night);
     let crater = mix(1.0, 0.75 + 0.25 * vnoise(dir.xz * 900.0), night);
     sunDisc = frame.sunColor.rgb * disc * mix(6.0, 2.5, night) * crater * max(frame.sunDir.w, 0.6);
   }
-  if (y > 0.0 && frame.cloudColor.w > 0.001) {
+  if (y > 0.0 && (frame.cloudColor.w > 0.001 || (frame.atmo.y > 0.01 && frame.cloud.w > 0.5))) {
     if (frame.cloud.w > 0.5) {
       let c = textureSampleLevel(cloudTex, clampSamp, hemiOctEncode(normalize(vec3f(dir.x, max(y, 0.002), dir.z))) * 0.5 + 0.5, 0.0);
       let k = smoothstep(0.0, 0.03, y);
@@ -328,13 +395,50 @@ fn shadowCascade(wp: vec3f, idx: i32, texel: f32) -> f32 {
   s += textureSampleCompareLevel(shadowTex, shadowSamp, uv + vec2f(-o, o) * 0.7, idx, z);
   return s / 10.0;
 }
+const POISSON = array<vec2f, 12>(
+  vec2f(-0.326, -0.406), vec2f(-0.840, -0.074), vec2f(-0.696, 0.457), vec2f(-0.203, 0.621),
+  vec2f(0.962, -0.195), vec2f(0.473, -0.480), vec2f(0.519, 0.767), vec2f(0.185, -0.893),
+  vec2f(0.507, 0.064), vec2f(0.896, 0.412), vec2f(-0.322, -0.933), vec2f(-0.792, -0.598));
+/**
+ * Contact-hardening soft shadow (PCSS) in the near cascade: the average depth of the blockers sets
+ * the penumbra, so shadows are crisp where objects touch and soften with distance.
+ * Cascade 0 spans 68 m (see Renderer.cascades).
+ */
+fn shadowPCSS(wp: vec3f, texel: f32) -> f32 {
+  let p = frame.sunVP0 * vec4f(wp, 1.0);
+  let uv = p.xy * vec2f(0.5, -0.5) + 0.5;
+  if (any(uv < vec2f(0.02)) || any(uv > vec2f(0.98)) || p.z >= 1.0 || p.z <= 0.0) { return -1.0; }
+  let z = p.z - 0.0004;
+  let dims = vec2f(textureDimensions(shadowTex));
+  let ang = hash21(floor(wp.xz * 37.0) + floor(wp.yy * 23.0)) * 6.2831;
+  let rot = mat2x2f(cos(ang), sin(ang), -sin(ang), cos(ang));
+  var poisson = POISSON;
+  let searchR = 0.7 / 68.0;
+  var blockers = 0.0;
+  var sum = 0.0;
+  for (var i = 0; i < 12; i++) {
+    let q = uv + rot * poisson[i] * searchR;
+    let d = textureLoad(shadowTex, vec2i(clamp(q, vec2f(0.0), vec2f(0.999)) * dims), 0, 0);
+    if (d < z) { sum += d; blockers += 1.0; }
+  }
+  if (blockers < 0.5) { return 1.0; }
+  let gap = (z - sum / blockers) * 1899.0;
+  let pen = clamp(gap * 0.03 * frame.ssao.w, 0.0, 0.9) / 68.0 + texel * 1.2;
+  var s = 0.0;
+  for (var i = 0; i < 12; i++) {
+    s += textureSampleCompareLevel(shadowTex, shadowSamp, uv + rot * poisson[i] * pen, 0, z);
+  }
+  return s / 12.0;
+}
 /** Sun visibility (1 lit, 0 shadowed) from the cascaded shadow maps. */
 fn sunShadow(wp: vec3f, n: vec3f) -> f32 {
   if (frame.shadow.x < 0.5) { return 1.0; }
   let ndl = dot(n, frame.sunDir.xyz);
   let slope = clamp(1.0 - abs(ndl), 0.0, 1.0);
   let texel = frame.shadow.y;
-  var s = shadowCascade(wp + n * (0.04 + 0.12 * slope), 0, texel);
+  var s: f32;
+  if (frame.ssao.z > 0.5) { s = shadowPCSS(wp + n * (0.04 + 0.12 * slope), texel); }
+  else { s = shadowCascade(wp + n * (0.04 + 0.12 * slope), 0, texel); }
   if (s < 0.0 && frame.shadow.w > 1.5) { s = shadowCascade(wp + n * (0.25 + 0.8 * slope), 1, texel); }
   if (s < 0.0) { return 1.0; }
   return mix(1.0, s, frame.shadow.z);
@@ -345,7 +449,12 @@ struct Mat { rough: f32, metal: f32, f0: f32, trans: f32, sheen: f32 };
 fn defaultMat() -> Mat { return Mat(0.62, 0.0, 0.04, 0.0, 0.0); }
 
 /** Stylized PBR: soft toon terminator, shadows, sky + sea bounce ambient, glossy specular and env reflections. */
-fn shade(albedo: vec3f, n: vec3f, wp: vec3f, ao: f32, m: Mat) -> vec3f {
+fn shade(albedoIn: vec3f, n: vec3f, wp: vec3f, ao: f32, mIn: Mat) -> vec3f {
+  // rain soaks upward-facing surfaces above the water: darker and glossier
+  let wet = frame.mapInfo.w * smoothstep(0.2, 0.8, n.y) * smoothstep(0.0, 0.6, wp.y);
+  let albedo = albedoIn * (1.0 - wet * 0.32);
+  var m = mIn;
+  m.rough = mix(mIn.rough, 0.12, wet * 0.85);
   let V = normalize(frame.camPos.xyz - wp);
   let L = frame.sunDir.xyz;
   let depth = max(0.0, -wp.y);
@@ -362,7 +471,10 @@ fn shade(albedo: vec3f, n: vec3f, wp: vec3f, ao: f32, m: Mat) -> vec3f {
   // ambient: sky hemisphere, bounce light off the sea, and the underwater glow
   let up = n.y * 0.5 + 0.5;
   let hemi = mix(frame.ground.rgb, frame.ambient.rgb, up) * frame.ambient.w;
-  let bounce = frame.waterShallow.rgb * clamp(-n.y, 0.0, 1.0) * exp(-max(wp.y, 0.0) * 0.12) * frame.sunDir.w * 0.12;
+  // bounce light from below: sunlit ground near land, the sea elsewhere
+  let landK = smoothstep(0.3, 3.0, wp.y);
+  let bounceCol = mix(frame.waterShallow.rgb * 0.7 + frame.sunColor.rgb * 0.1, frame.ground.rgb * 1.2, landK);
+  let bounce = bounceCol * clamp(0.5 - n.y * 0.5, 0.0, 1.0) * exp(-max(wp.y, 0.0) * 0.05) * frame.sunDir.w * (0.08 + 0.2 * max(frame.sunDir.y, 0.0));
   let uwAmb = mix(frame.uwDeep.rgb, frame.uwColor.rgb, sunAtt) * (0.7 + 0.6 * up) * 1.4;
   col += albedo * kd * (mix(hemi + bounce, uwAmb, under) * ao + frame.ambient.rgb * m.sheen * pow(1.0 - max(dot(n, V), 0.0), 3.0) * 0.5);
   // specular highlight
@@ -382,6 +494,20 @@ fn shade(albedo: vec3f, n: vec3f, wp: vec3f, ao: f32, m: Mat) -> vec3f {
   if (wp.y < -0.2 && m.metal < 0.5) {
     let ca = causticsRGB(wp) * exp(-depth * 0.03) * smoothstep(-0.2, -2.0, wp.y) * frame.misc.w * max(n.y * 0.8 + 0.2, 0.0) * vis;
     col += frame.sunColor.rgb * ca * (albedo * 0.9 + 0.05);
+  }
+  // point lights: lamps, lava, crystals, portals, glowing fish, lightning
+  let cnt = u32(lights.count.x);
+  for (var i = 0u; i < cnt; i++) {
+    let pl = lights.items[i];
+    let d = pl.pos.xyz - wp;
+    let dist = length(d);
+    if (dist > pl.pos.w) { continue; }
+    let ld = d / max(dist, 0.001);
+    let att = pow(1.0 - dist / pl.pos.w, 2.0);
+    let nl = max(dot(n, ld), 0.0) * 0.85 + 0.15;
+    let hl = normalize(ld + V);
+    let psp = pow(max(dot(n, hl), 0.0), shin) * (shin + 8.0) / 25.0 * gloss;
+    col += pl.col.rgb * pl.col.w * att * (albedo * nl * (kd + 0.2) + F * min(psp, 8.0));
   }
   // lure / boat lamp
   if (frame.lampPos.w > 0.0) {
@@ -414,7 +540,10 @@ fn applyFog(c: vec3f, wp: vec3f) -> vec3f {
   let hf = exp(-max(wp.y, 0.0) * 0.004);
   let dir = normalize(wp - frame.camPos.xyz);
   let sunGlow = pow(max(dot(dir, frame.sunDir.xyz), 0.0), 8.0) * 0.35;
-  let fogCol = frame.fogColor.rgb + frame.sunColor.rgb * sunGlow * frame.sunDir.w * 0.3;
+  var fogCol = frame.fogColor.rgb + frame.sunColor.rgb * sunGlow * frame.sunDir.w * 0.3;
+  // distant haze takes the colour of the sky at the horizon behind it
+  let aw = frame.atmo.x * 0.7 * (1.0 - frame.mapInfo.z);
+  if (aw > 0.001) { fogCol = mix(fogCol, physSky(normalize(vec3f(dir.x, 0.015, dir.z))), aw); }
   return mix(c, fogCol, clamp(f * mix(0.75, 1.0, hf), 0.0, 1.0));
 }
 

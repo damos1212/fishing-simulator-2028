@@ -1,11 +1,11 @@
-// Random world events: feeding frenzies, golden hours and meteor showers.
+// Random world events: feeding frenzies, golden hours, meteor showers and the blood moon.
 import { ALL_ZONES, realmZones, type Zone } from '../data/zones';
 import { rng, Vec3 } from '../engine/math';
 import type { Renderer } from '../engine/renderer';
 import { heightAt } from '../world/terrain';
 import type { FX } from './fx';
 
-export type EventKind = 'frenzy' | 'golden' | 'meteor';
+export type EventKind = 'frenzy' | 'golden' | 'meteor' | 'bloodmoon';
 
 export interface WorldEvent {
   kind: EventKind;
@@ -22,6 +22,7 @@ export const EVENT_INFO: Record<EventKind, { title: string; sub: string; color: 
   frenzy: { title: 'FEEDING FRENZY', sub: 'Tons of fish, rare ones too. Follow the star on your map!', color: '#ff8a2a' },
   golden: { title: 'GOLDEN HOUR', sub: 'Rare and legendary fish are everywhere for 2 minutes!', color: '#ffd23a' },
   meteor: { title: 'METEOR SHOWER', sub: 'Sail through the fallen star fragments for pearls!', color: '#a0c0ff' },
+  bloodmoon: { title: 'BLOOD MOON', sub: 'Rare and shiny fish surface, everything is worth 50% more... and something stirs in the deep.', color: '#ff4a4a' },
 };
 
 export class WorldEvents {
@@ -42,14 +43,14 @@ export class WorldEvents {
 
   /** Returns a newly started event, if any. */
   update(dt: number, time: number, boat: Vec3, hull: number, night: boolean, fx: FX): WorldEvent | null {
-    if (this.active && this.active.until < time) this.active = null;
+    if (this.active && (this.active.until < time || (this.active.kind === 'bloodmoon' && !night))) this.active = null;
     this.fragments = this.fragments.filter((f) => f.until > time);
     let started: WorldEvent | null = null;
     if (!this.active) {
       this.next -= dt;
       if (this.next <= 0) {
         this.next = 180 + this.r() * 180;
-        const kinds: EventKind[] = night ? ['frenzy', 'meteor', 'meteor', 'golden'] : ['frenzy', 'frenzy', 'golden'];
+        const kinds: EventKind[] = night ? ['frenzy', 'meteor', 'meteor', 'golden', 'bloodmoon', 'bloodmoon'] : ['frenzy', 'frenzy', 'golden'];
         const kind = kinds[Math.floor(this.r() * kinds.length)];
         started = this.start(kind, time, boat, hull);
       }
@@ -97,7 +98,7 @@ export class WorldEvents {
       }
       radius = 70;
     }
-    this.active = { kind, zone, pos, radius, until: time + (kind === 'frenzy' ? 180 : kind === 'golden' ? 120 : 100) };
+    this.active = { kind, zone, pos, radius, until: time + (kind === 'frenzy' ? 180 : kind === 'golden' ? 120 : kind === 'bloodmoon' ? 240 : 100) };
     return this.active;
   }
 
@@ -110,6 +111,7 @@ export class WorldEvents {
   }
 
   get golden() { return this.active?.kind === 'golden'; }
+  get bloodMoon() { return this.active?.kind === 'bloodmoon'; }
 
   /** Collects star fragments the boat sails through; returns how many. */
   collect(boat: Vec3) {

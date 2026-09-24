@@ -2,7 +2,7 @@
 import { activeOpen, NAMED_ZONES, OPEN_SEA, REALM_OPEN, realmZoneIdx, type ZoneEnv, zoneWeights } from '../data/zones';
 import type { FrameState } from '../engine/frame';
 import { clamp, hex, mixRGB, type RGB, smoothstep } from '../engine/math';
-import { heightAt } from './terrain';
+import { heightAt, shoreDistAt } from './terrain';
 import type { TimeWeather } from './timeweather';
 
 const NIGHT_TOP: RGB = [0.002, 0.004, 0.018];
@@ -18,7 +18,7 @@ type ColKey = { [K in keyof ZoneEnv]: ZoneEnv[K] extends string ? K : never }[ke
 const COLOR_KEYS: ColKey[] = ['skyTop', 'skyHorizon', 'fog', 'sun', 'cloud', 'waterShallow', 'waterDeep', 'uw', 'uwDeep', 'ambient', 'ground', 'lava', 'floor'];
 const NUM_KEYS: NumKey[] = ['fogDensity', 'sunIntensity', 'cloudCover', 'stars', 'nebula', 'sparkle', 'uwDensity', 'darkDepth', 'lightFalloff',
   'caustics', 'ambientIntensity', 'waves', 'lavaStrength', 'voidAmount', 'frost', 'eerie', 'storm', 'clarity', 'aurora', 'neon', 'vortex',
-  'cloudBase', 'cloudDensity'];
+  'cloudBase', 'cloudDensity', 'physSky'];
 
 interface LinEnv { c: Record<ColKey, RGB>; n: Record<NumKey, number> }
 const lin = (e: ZoneEnv): LinEnv => ({
@@ -102,6 +102,12 @@ export class Environment {
     f.foam = 0.55 + n.waves * 0.3 + tw.storm * 1.3;
     f.waterDetail = 0.45 + 0.2 * n.waves + tw.storm * 0.25;
     f.cameraUnderwater = underwater ? 1 : 0;
+    // physically based sky: weight, brightness matched to the zone's sun, greyed by bad weather
+    f.physSky = n.physSky * (1 - n.voidAmount);
+    f.skyExposure = 5 * (n.sunIntensity / 2.4) * (1 - 0.35 * tw.storm);
+    f.skyGrey = clamp(wet * 0.7 + tw.fog * 0.4, 0, 1);
+    f.cirrus = clamp((0.25 + 0.5 * n.physSky) * (1 - tw.storm) * (1 - tw.rain * 0.6), 0, 1);
+    tw.trueSun(f.trueSun);
     // visibility shrinks in the dark deep
     f.uwDensity = n.uwDensity * (1 + clamp(camDepth / n.darkDepth, 0, 3) * 0.6);
   }
@@ -116,8 +122,7 @@ export class Environment {
 
 /** CPU mirror of the ocean shader's wave height (ignores horizontal Gerstner drift). */
 const WAVES = [
-  [1.0, 0.35, 64, 0.55], [0.4, 1.0, 33, 0.3], [-0.8, 0.6, 19, 0.16], [0.6, -0.9, 11, 0.08], [-0.3, -1.0, 6.5, 0.035],
-  [0.9, -0.25, 4.1, 0.02], [-0.6, 0.8, 2.7, 0.012], [0.15, 0.95, 1.9, 0.008],
+  [1.0, 0.35, 64, 0.45], [0.4, 1.0, 33, 0.22], [-0.8, 0.6, 19, 0.1],
 ].map(([dx, dz, L, a]) => { const l = Math.hypot(dx, dz); const k = (Math.PI * 2) / L; return { dx: dx / l, dz: dz / l, k, a, c: Math.sqrt(9.8 / k) }; });
 
 export function waveHeight(x: number, z: number, t: number, scale: number) {
@@ -126,4 +131,27 @@ export function waveHeight(x: number, z: number, t: number, scale: number) {
   // matches the shader: waves calm down over the shallows
   const g = heightAt(x, z);
   return g > -6 ? h * (0.35 + 0.65 * smoothstep(-0.5, -6, g)) : h;
+}
+
+/** CPU mirror of the shader's surf cycle (common.ts surfPhase). */
+export function surfPhase(x: number, z: number, t: number) {
+  const a = Math.sin(x * 0.011 + Math.sin(z * 0.0071) * 1.3) * 0.25 + Math.sin(z * 0.013 - x * 0.0043) * 0.2;
+  const v = t * 0.085 + a;
+  return v - Math.floor(v);
+}
+
+/** Where a breaker is pitching over near (x, z): returns the shoreward direction and strength, or null (mirrors shoreSurf). */
+export function breakerAt(x: number, z: number, t: number): { dx: number; dz: number; k: number } | null {
+  const ds = shoreDistAt(x, z);
+  if (ds > 60 || ds < 0.5) return null;
+  const h = heightAt(x, z);
+  if (h > -0.2 || h < -12) return null;
+  const cd = 70 * (1 - surfPhase(x, z, t));
+  const lip = ds - cd + 0.6;
+  const br = smoothstep(2.4, 1.1, -h);
+  if (br < 0.4 || Math.abs(lip) > 1.2) return null;
+  const e = 2;
+  const gx = shoreDistAt(x - e, z) - shoreDistAt(x + e, z), gz = shoreDistAt(x, z - e) - shoreDistAt(x, z + e);
+  const gl = Math.hypot(gx, gz) || 1;
+  return { dx: gx / gl, dz: gz / gl, k: br * (1 - Math.abs(lip) / 1.2) };
 }

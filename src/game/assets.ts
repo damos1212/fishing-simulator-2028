@@ -1,6 +1,6 @@
 import type { Archetype } from '../data/fish';
 import { loadGLB } from '../engine/glb';
-import { buoyMesh, flagMesh, kelpMesh, palmMesh, planetMesh, reelMesh, rodSegmentMesh, seagrassMesh } from '../engine/procgen';
+import { buoyMesh, flagMesh, flowerMesh, grassMesh, kelpMesh, palmMesh, planetMesh, reelMesh, rodSegmentMesh, seagrassMesh, tentacleSegmentMesh } from '../engine/procgen';
 import type { GpuMesh, GpuModel, Renderer } from '../engine/renderer';
 
 const ARCHETYPES: Archetype[] = ['slim', 'tall', 'round', 'eel', 'shark', 'ray', 'jelly', 'squid', 'angler', 'whale', 'sword', 'eyeball',
@@ -20,9 +20,13 @@ export interface Assets {
   planets: GpuMesh[];
   buoy: GpuMesh;
   rodSeg: GpuMesh;
+  tentacle: GpuMesh;
   reel: GpuMesh;
   flag: GpuMesh;
   seagrass: GpuMesh;
+  /** meadow grass: green, jungle, candy mint, neon violet */
+  grass: GpuMesh[];
+  flowers: GpuMesh[];
 }
 
 export async function loadAssets(r: Renderer, progress: (p: number) => void): Promise<Assets> {
@@ -45,8 +49,11 @@ export async function loadAssets(r: Renderer, progress: (p: number) => void): Pr
     planets: [0, 1, 2].map((k) => r.registerMesh(planetMesh(k))),
     buoy: r.registerMesh(buoyMesh()),
     rodSeg: r.registerMesh(rodSegmentMesh()),
+    tentacle: r.registerMesh(tentacleSegmentMesh()),
     reel: r.registerMesh(reelMesh()),
     flag: r.registerMesh(flagMesh()),
     seagrass: r.registerMesh(seagrassMesh()),
+    grass: [grassMesh(), grassMesh('#3f9a3a', '#8ad05a'), grassMesh('#6ae0b0', '#d0fff0'), grassMesh('#7a3ad0', '#ff9ae8')].map((m) => r.registerMesh(m)),
+    flowers: ['#ff7ab0', '#ffe04a', '#ffffff', '#b07aff', '#ff5a3a'].map((c) => r.registerMesh(flowerMesh(c))),
   };
 }

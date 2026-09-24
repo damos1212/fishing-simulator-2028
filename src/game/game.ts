@@ -9,9 +9,9 @@ import {
 import { clamp, damp, dampAngle, hex, rng, Vec3 } from '../engine/math';
 import { type GpuMesh, QUALITY, type Renderer } from '../engine/renderer';
 import { UI } from '../ui/ui';
-import { Environment, waveHeight } from '../world/environment';
+import { breakerAt, Environment, waveHeight } from '../world/environment';
 import { type Outpost, type Portal, Scenery } from '../world/scenery';
-import { buildHeightMap, buildTerrainMesh, heightAt, MAP_POWER, MAP_R, syncRealm, WORLD_R } from '../world/terrain';
+import { buildHeightMap, buildTerrainMesh, heightAt, MAP_POWER, MAP_R, syncRealm, useHeightMap, WORLD_R } from '../world/terrain';
 import { TimeWeather } from '../world/timeweather';
 import { Aquarium } from './aquarium';
 import type { Assets } from './assets';
@@ -19,10 +19,14 @@ import { GameAudio, type Mood } from './audio';
 import { Boat } from './boat';
 import { CameraRig } from './camera';
 import {
-  buy, buyCosmetic, buyItem, type CaughtFish, computeStats, coolerValue, equipCosmetic, formatMoney, landCatch, masteredZones, progressLevel,
-  type SaveData, sellAll, useItem,
+  buy, buyCosmetic, buyItem, buyPerk, type CaughtFish, computeStats, coolerValue, equipCosmetic, formatMoney, landCatch, masteredZones, perkRank, perkValue, progressLevel,
+  type SaveData, sellAll, SHINY_VALUE, useItem,
 } from './economy';
 import { NPCS, QUESTS } from '../data/quests';
+import { DEPTH_LAYERS, Depths } from './depths';
+import { Kraken } from './kraken';
+import { type Form, Tournament, TOURNEYS, type TourneyKind } from './tournament';
+import { type PerkId, perkById } from '../data/perks';
 import { EVENT_INFO, WorldEvents } from './events';
 import { FishActor, Fishing, type FishingContext } from './fishing';
 import { FX } from './fx';
@@ -103,6 +107,11 @@ export class Game {
   /** Extra creatures to draw (debug/model preview via the console). */
   debugActors: FishActor[] = [];
   events = new WorldEvents();
+  depths = new Depths();
+  private prevFishState = 'idle';
+  /** best depth when the cast began, and the next record milestone to celebrate */
+  private recordBase = 0;
+  private nextRecord = 100;
   private mastered = new Set<ZoneId>();
   private timeScale = 1;
   private slowmo = 0;
@@ -122,6 +131,8 @@ export class Game {
   /** Slow-motion orbit around a freshly landed legendary or boss. */
   private trophy: { actor: FishActor; t: number } | null = null;
   private nextAmbience = 20;
+  private rainbow = 0;
+  private sinceRain = 0;
 
   constructor(private r: Renderer, private a: Assets, world: RealmWorld, public ui: UI, public save: SaveData, private canvas: HTMLCanvasElement) {
     this.input = new Input(canvas);
@@ -227,6 +238,9 @@ export class Game {
     this.audio.setVolumes(s.music, s.sfx);
     this.r.renderScale = s.quality;
     if (this.r.quality !== QUALITY[s.graphics]) this.r.setQuality(s.graphics);
+    this.r.settings.taa = s.taa;
+    this.r.settings.motionBlur = s.motionBlur ? 0.5 : 0;
+    this.r.settings.autoExposure = s.autoExposure;
     this.cam.shakeScale = s.shake ? 1 : 0;
   }
 
@@ -252,6 +266,7 @@ export class Game {
       this.boat.flagInst.c.set([z[0], z[1], z[2], 1]);
     }
     this.boat.pet = cosmeticById.get(eq.pet)?.mesh ?? '';
+    this.trail = eq.trail ?? 'trail-none';
     const lure = cosmeticById.get(eq.lure);
     if (lure && lure.id !== 'lure-default' && lure.colors) this.fishing.lureLook = { colors: lure.colors, pattern: lure.pattern ?? 0, glow: lure.glow ?? 0 };
     else {
@@ -292,7 +307,34 @@ export class Game {
     return out;
   }
 
-  private water = (x: number, z: number) => waveHeight(x, z, this.time, this.r.frame.waveScale);
+  /** Water height: CPU swell plus the GPU wind sea read back near the camera and the lure. */
+  private water = (x: number, z: number) => {
+    let h = waveHeight(x, z, this.time, this.r.frame.waveScale);
+    const q = this.fftQ;
+    for (let i = 4; i < 6; i++) if (Number.isFinite(q[i * 3 + 2]) && Math.abs(q[i * 3] - x) + Math.abs(q[i * 3 + 1] - z) < 6) { h += q[i * 3 + 2]; break; }
+    return h;
+  };
+  private kraken = new Kraken();
+  private trail = 'trail-none';
+  private trailT = 0;
+  private tourney: Tournament | null = null;
+  private catchLog: { t: number; n: number; value: number; len: number }[] = [];
+  private lastPitch = 0;
+  private wasUnder = false;
+  private underTime = 0;
+  private lastUnderTime = 0;
+  private slamCd = 0;
+  /** Water under the camera, allowing for the wave just in front of it so it never dips into a crest. */
+  private camWater = (x: number, z: number) => {
+    let h = waveHeight(x, z, this.time, this.r.frame.waveScale);
+    const q = this.fftQ;
+    let extra = -Infinity;
+    for (const i of [4, 6]) if (Number.isFinite(q[i * 3 + 2]) && Math.abs(q[i * 3] - x) + Math.abs(q[i * 3 + 1] - z) < 8) extra = Math.max(extra, q[i * 3 + 2]);
+    if (extra > -Infinity) h += extra;
+    return h + 0.3 * Math.max(0, this.r.frame.waveScale - 1);
+  };
+  /** x, z, height per readback query (boat hull x4, camera, lure, just ahead of the camera). */
+  private fftQ = new Float32Array(21).fill(NaN);
 
   // ------------------------------------------------------------------ modals
   private openPause() {
@@ -394,11 +436,75 @@ export class Game {
       },
       close: () => this.closeShop(),
       statText: (id: TrackId, tier: number) => statText(id, tier),
+      buyPerk: (id: PerkId) => {
+        if (buyPerk(this.save, id)) {
+          this.audio.buy();
+          this.ui.toast(`${perkById.get(id)!.name} rank ${perkRank(this.save, id)}!`, perkById.get(id)!.color, true, 'Perk learned');
+          this.celebrate(checkAchievements(this.save));
+          this.persist();
+          this.refreshHud();
+        } else this.audio.deny();
+        this.ui.renderShop(this.save, hs);
+      },
+      tourneys: () => (this.tourney ? null : TOURNEYS.map((t) => ({ kind: t.kind, title: t.title, desc: t.desc, fee: this.tourneyFee() }))),
+      startTourney: (kind: TourneyKind) => {
+        const fee = this.tourneyFee();
+        if (this.tourney || this.save.money < fee) { this.audio.deny(); return; }
+        this.save.money -= fee;
+        this.save.stats.tourneys++;
+        this.tourney = new Tournament(kind, fee, this.form(), Math.floor(this.time * 1000));
+        this.closeShop();
+        this.audio.airhorn();
+        const info = this.tourney.info;
+        this.ui.banner('Tournament', info.title.toUpperCase(), `${info.desc} Fish anywhere - GO!`, false, 4000);
+        this.refreshHud();
+      },
     };
     this.ui.openShop(this.save, hs);
   }
 
   private rerollCost() { return nicePrice(LEVEL_VALUE[progressLevel(this.save)] * 2); }
+  private tourneyFee() { return nicePrice(LEVEL_VALUE[progressLevel(this.save)] * 1.5); }
+
+  /** The player's recent pace (last 10 minutes of landed catches), used to set tournament rivals. */
+  private form(): Form {
+    const since = this.time - 600;
+    const log = this.catchLog.filter((c) => c.t > since);
+    const first = log.length ? log[0].t : this.time;
+    const minutes = Math.max(2, (this.time - first) / 60);
+    const hooks = Math.max(1, this.stats.hooks);
+    const count = log.reduce((s, c) => s + c.n, 0);
+    const value = log.reduce((s, c) => s + c.value, 0);
+    const avgValue = count ? value / count : LEVEL_VALUE[progressLevel(this.save)] * 0.08;
+    const perMinCount = log.length >= 2 ? count / minutes : Math.min(hooks, 6) * 0.55;
+    return { perMinCount, perMinValue: perMinCount * avgValue, bestLen: Math.max(1, ...log.map((c) => c.len)) * 0.95 };
+  }
+
+  private updateTourney(dt: number) {
+    const t = this.tourney;
+    if (!t) { this.ui.tourney(null); return; }
+    const before = t.place;
+    t.update(dt);
+    if (t.place > before && t.place === 2 && !t.done) this.ui.toast(`${t.standings()[0].name} took the lead!`, '#ffb070');
+    this.ui.tourney({ title: t.info.title, left: t.left, standings: t.standings(), unit: t.info.unit });
+    if (t.done) {
+      const place = t.place;
+      const prize = Tournament.prize(place, t.fee);
+      this.save.money += prize.money;
+      this.save.stats.earned += prize.money;
+      this.save.pearls += prize.pearls;
+      if (place === 1) this.save.stats.tourneyWins++;
+      this.audio.airhorn();
+      if (place === 1) { this.audio.legendary(); this.fireworks = Math.max(this.fireworks, 5); }
+      const ord = ['1st', '2nd', '3rd', '4th', '5th'][place - 1];
+      this.ui.banner(t.info.title, place === 1 ? 'CHAMPION!' : `You finished ${ord}`,
+        prize.money ? `Prize: ${formatMoney(prize.money)} + ${prize.pearls} pearl${prize.pearls > 1 ? 's' : ''}` : 'Better luck next time!', false, 5000, place === 1 ? 'rainbow' : '');
+      this.tourney = null;
+      this.ui.tourney(null);
+      this.celebrate(checkAchievements(this.save));
+      this.refreshHud();
+    }
+  }
 
   private destinations() {
     const list: { name: string; zone: string; cost: number; pos: Vec3; heading: number; here: boolean }[] = [];
@@ -419,6 +525,60 @@ export class Game {
   private startTravel(to: Vec3, heading: number) {
     this.travel = { t: 0, to: to.clone(), heading };
     this.audio.whoosh();
+  }
+
+  /** Orb chains, depth layers, records and deep-sea giants while the lure is under water. */
+  private updateDepths(dt: number) {
+    const f = this.fishing;
+    const d = this.depths;
+    if (f.state === 'under' && this.prevFishState !== 'under') {
+      d.reset(f.lure);
+      this.recordBase = this.save.stats.deepest;
+      this.nextRecord = Math.max(100, Math.ceil((this.recordBase + 1) / (this.recordBase < 1000 ? 100 : 250)) * (this.recordBase < 1000 ? 100 : 250));
+    }
+    this.prevFishState = f.state;
+    if (f.state !== 'under') { d.clear(); return; }
+    const zone = zoneAt(f.lure.x, f.lure.z);
+    d.update(dt, this.time, f.lure, f.lureVel, zone.id, this.stats.lineLength, perkValue(this.save, 'magnet'));
+    const depth = -f.lure.y;
+    if (depth >= this.nextRecord && depth > this.recordBase + 5) {
+      this.save.pearls++;
+      this.ui.toast(`NEW DEPTH RECORD ${this.nextRecord}m!`, '#c070ff', true, '+1 pearl');
+      this.audio.treasure();
+      this.nextRecord += this.nextRecord < 1000 ? 100 : 250;
+      this.refreshHud();
+    }
+    for (const e of d.events) {
+      if (e.type === 'orb') {
+        const lvl = zone.level;
+        if (e.pearl) {
+          this.save.pearls += 1;
+          this.ui.toast('PEARL ORB!', '#e0b0ff', false, '+1 pearl');
+          this.audio.treasure();
+          this.fx.burst(e.pos, [0.8, 0.6, 1], 30, 4, 0.3);
+        } else {
+          const v = Math.max(1, Math.round(LEVEL_VALUE[lvl] * 0.12 * (1 + Math.min(e.streak, 10) * 0.15)));
+          this.save.money += v;
+          this.save.stats.earned += v;
+          this.fx.burst(e.pos, [1, 0.85, 0.3], 10, 2.5, 0.25);
+          const sp = this.r.frame.viewProj;
+          const x = sp[0] * e.pos.x + sp[4] * e.pos.y + sp[8] * e.pos.z + sp[12], y = sp[1] * e.pos.x + sp[5] * e.pos.y + sp[9] * e.pos.z + sp[13];
+          const w = sp[3] * e.pos.x + sp[7] * e.pos.y + sp[11] * e.pos.z + sp[15];
+          if (w > 0) this.ui.floater((x / w * 0.5 + 0.5) * innerWidth, (0.5 - y / w * 0.5) * innerHeight, `+${formatMoney(v)}`);
+        }
+        this.audio.orb(e.streak, e.pearl);
+        this.save.stats.orbs++;
+      } else if (e.type === 'layer') {
+        const L = DEPTH_LAYERS[e.layer];
+        this.ui.toast(L.name.toUpperCase(), L.color, true, `${L.from}m - ${L.tag}`);
+        this.audio.layer(e.layer);
+      } else if (e.type === 'giant') {
+        this.audio.groan();
+        this.cam.shake(0.25);
+      }
+    }
+    if (d.events.length) { this.ui.setMoney(this.save.money); this.ui.setPearls(this.save.pearls); }
+    d.events.length = 0;
   }
 
   private comboMult() { return Math.min(2, 1 + 0.1 * Math.max(0, this.combo.n - 1)); }
@@ -445,6 +605,8 @@ export class Game {
     if (!w.scenery) w.scenery = new Scenery(this.r, this.a, w.terrain, this.save.realms);
     else w.scenery.buildPortals(this.save.realms);
     this.r.setHeightMap(w.heightmap, 800);
+    useHeightMap(w.heightmap, 800);
+    this.r.resetHistory();
     this.scenery = w.scenery;
     this.spots = new Hotspots();
     this.life.setRealm(id, this.scenery);
@@ -790,7 +952,8 @@ export class Game {
     }
 
     // ---- boat / casting
-    const sailing = f.state === 'idle' || f.state === 'aim';
+    const kraken = this.kraken.active;
+    const sailing = (f.state === 'idle' || f.state === 'aim') && !kraken;
     this.dock = null;
     if (Math.abs(this.boat.speed) < 7) {
       if (this.boat.pos.distanceXZ(this.scenery.dockSpot) < 22) this.dock = { kind: 'harbor' };
@@ -822,11 +985,12 @@ export class Game {
     } else {
       this.boat.throttle = 0;
       this.boat.steer = 0;
-      this.boat.faceWorldYaw(Math.atan2(f.lure.x - this.boat.pos.x, f.lure.z - this.boat.pos.z));
+      if (!kraken) this.boat.faceWorldYaw(Math.atan2(f.lure.x - this.boat.pos.x, f.lure.z - this.boat.pos.z));
     }
     this.swingT -= dt;
     if (this.swingT <= 0 && f.state !== 'aim') this.boat.armTarget = f.state === 'under' ? -0.2 - f.tension * 0.4 : 0;
-    this.boat.anchored = f.state !== 'idle';
+    this.boat.anchored = f.state !== 'idle' || kraken;
+    this.boat.sink = this.kraken.squeeze;
     const boost = this.effects.energyUntil > this.time ? 1.25 : 1;
     this.boat.update(dt, this.time, s.boatSpeed * boost, this.r.frame.waveScale, () => { this.audio.thud(); this.cam.shake(0.6); });
     this.resolveCollisions(dt);
@@ -836,10 +1000,15 @@ export class Game {
     // ---- fishing
     f.update(dt, this.fishCtx());
     this.handleFishingEvents();
+    this.updateDepths(dt);
 
     // ---- world
     this.updateZones(dt);
     const strike = this.tw.update(dt, this.env.storm, this.cam.pos);
+    // a rainbow shows up for a while after a shower once the sun comes out
+    this.sinceRain = this.tw.rain > 0.35 ? 70 : this.sinceRain - dt;
+    const rbWant = this.sinceRain > 0 && this.tw.rain < 0.3 && this.tw.storm < 0.2 && this.r.frame.sunDir.y > 0.12 && this.tw.night < 0.2 ? 1 : 0;
+    this.rainbow = damp(this.rainbow, rbWant, 0.4, dt);
     if (strike) {
       const d = strike.distanceXZ(this.cam.pos);
       this.r.post.flash = [0.85, 0.9, 1, this.camUnder ? 0.08 : 0.35];
@@ -848,6 +1017,8 @@ export class Game {
     this.life.update(dt, this.time, this.boat, this.zone.id, this.r.frame.waveScale, this.fx, this.audio);
     this.aquarium.update(dt);
     this.updateWorldEvents(dt);
+    this.updateKraken(dt);
+    this.updateTourney(dt);
     this.updateTreasureMap();
     this.questCheckT -= dt;
     if (this.questCheckT <= 0) { this.questCheckT = 1; this.checkQuest(); }
@@ -887,6 +1058,7 @@ export class Game {
       this.ui.banner(started.zone ? started.zone.name : 'Event', info.title, info.sub, false, 5000);
       this.audio.zone();
       if (started.kind === 'golden') this.r.post.flash = [1, 0.85, 0.3, 0.3];
+      if (started.kind === 'bloodmoon') { this.r.post.flash = [0.8, 0.05, 0.05, 0.35]; this.save.stats.bloodMoons++; this.audio.groan(); }
     }
     const got = this.events.collect(this.boat.pos);
     if (got > 0) {
@@ -897,6 +1069,71 @@ export class Game {
       this.ui.toast('STAR FRAGMENT!', '#a0c0ff', false, `+${got} pearl${got > 1 ? 's' : ''}`);
       this.refreshHud();
     }
+  }
+
+  /** The Kraken: rolls for an encounter over deep water at night, in storms or under a blood moon. */
+  private updateKraken(dt: number) {
+    const k = this.kraken;
+    const b = this.boat.pos;
+    const realmOk = ['blue', 'jurassic', 'shattered'].includes(activeRealm());
+    const moody = this.tw.isNight || this.tw.storm > 0.5 || this.events.bloodMoon;
+    const eligible = realmOk && moody && heightAt(b.x, b.z) < -120 && this.fishing.state === 'idle' && Math.abs(this.boat.speed) < 16
+      && progressLevel(this.save) >= 3 && this.ui.modal === 'none' && !this.travel;
+    k.ease = 1 + perkValue(this.save, 'kraken') * 0.35;
+    k.tick(dt, eligible, (this.events.bloodMoon ? 3 : 1) * (this.tw.storm > 0.5 ? 1.5 : 1), b);
+    if (k.state === 'grab' && this.input.hit('Mouse0', 'Space')) { k.press(); this.audio.click(); this.cam.shake(0.15); }
+    k.update(dt, b, this.fx);
+    this.ui.struggle(k.state === 'grab', k.progress, k.timeLeft);
+    for (const e of k.events) {
+      switch (e.type) {
+        case 'warn':
+          this.ui.toast('The sea trembles...', '#c080ff', true, 'Something huge is rising beneath you');
+          this.audio.groan();
+          this.cam.shake(0.4);
+          break;
+        case 'rise':
+          this.ui.banner('Terror of the deep', 'THE KRAKEN!', 'Mash Space / Click to break free!', false, 3000, 'rainbow');
+          this.audio.kraken();
+          this.fx.splash(b.clone(), 1.6);
+          this.cam.shake(1.4);
+          this.slowmo = 0.6;
+          break;
+        case 'slap':
+          this.audio.slap();
+          this.cam.shake(0.5);
+          this.fx.splash(b.clone().add(new Vec3((Math.random() - 0.5) * 8, 0, (Math.random() - 0.5) * 8)), 1);
+          break;
+        case 'win': {
+          const lvl = progressLevel(this.save);
+          const tamer = perkValue(this.save, 'kraken');
+          const cash = Math.round(LEVEL_VALUE[Math.min(lvl, LEVEL_VALUE.length - 1)] * 4 * (1 + tamer * 0.5));
+          const pearls = 6 + tamer * 3;
+          this.save.money += cash;
+          this.save.stats.earned += cash;
+          this.save.pearls += pearls;
+          this.save.stats.krakens++;
+          this.audio.legendary();
+          this.fx.burst(b.clone().add(new Vec3(0, 3, 0)), [0.8, 0.4, 1], 80, 9, 0.35);
+          this.fireworks = Math.max(this.fireworks, 4);
+          this.ui.banner('Victory!', 'KRAKEN REPELLED', `+${formatMoney(cash)} and ${pearls} pearls of kraken ink`, false, 4500, 'rainbow');
+          this.celebrate(checkAchievements(this.save));
+          this.refreshHud();
+          break;
+        }
+        case 'lose': {
+          const c = this.save.cooler;
+          const n = Math.floor(c.length / 2);
+          c.sort((a2, b2) => b2.value - a2.value);
+          const eaten = c.splice(0, n);
+          this.audio.chomp();
+          this.cam.shake(1);
+          this.ui.toast('The Kraken wins...', '#ff6a5a', true, eaten.length ? `It dragged ${eaten.length} fish from your cooler into the deep` : 'Lucky your cooler was empty!');
+          this.refreshHud();
+          break;
+        }
+      }
+    }
+    k.events.length = 0;
   }
 
   /** Treasure maps from bottles: dive the lure down at the X to dig up the loot. */
@@ -1057,7 +1294,7 @@ export class Game {
       dive: under && inp.down('Mouse2', 'ShiftLeft', 'ShiftRight'),
       reel: under && inp.down('Mouse0', 'Space'),
       hotspot: Math.max(this.spots.strengthAt(this.fishing.lure.x, this.fishing.lure.z), this.events.frenzyAt(this.fishing.lure.x, this.fishing.lure.z)),
-      rareBoost: this.events.golden ? 2.5 : 1,
+      rareBoost: this.events.golden ? 2.5 : this.events.bloodMoon ? 2 : 1,
       mastered: this.mastered,
       chests: this.scenery.chests,
       night: this.tw.isNight,
@@ -1067,7 +1304,19 @@ export class Game {
       energy: this.effects.energyUntil > this.time ? 1.6 : 1,
       golden: this.save.goldenHook,
       chum: this.effects.chum,
+      shinyBoost: perkValue(this.save, 'keeneye') * (this.events.bloodMoon ? 3 : 1),
+      valueBonus: this.valueBonus(),
+      diveBoost: perkValue(this.save, 'lungs'),
+      grip: perkValue(this.save, 'grip'),
     };
+  }
+
+  /** Catch value multiplier from perks, weather and the blood moon. */
+  private valueBonus() {
+    const s = this.save;
+    const w = this.tw.effective();
+    return (1 + perkValue(s, 'haggler')) * (this.tw.isNight ? 1 + perkValue(s, 'nightowl') : 1)
+      * (w === 'storm' || w === 'rain' ? 1 + perkValue(s, 'stormborn') : 1) * (this.events.bloodMoon ? 1.5 : 1);
   }
 
   private screenPos(p: Vec3) {
@@ -1113,6 +1362,12 @@ export class Game {
           const sc = this.screenPos(e.fish.pos);
           this.ui.floater(sc.x, sc.y - 30, sp.name, RARITY_COLOR[sp.rarity]);
           this.boat.petBounce = 0.5;
+          if (e.fish.shiny) {
+            this.ui.toast('SHINY!', '#ff9af0', true, `A shimmering ${sp.name}! Worth x${SHINY_VALUE}`);
+            this.audio.shiny();
+            this.fx.burst(e.fish.pos, [1, 0.6, 1], 40, 5, 0.3);
+            this.fx.burst(e.fish.pos, [0.6, 1, 1], 30, 4, 0.25);
+          }
           if (sp.rarity === 'legendary') { this.ui.toast('LEGENDARY!', '#ffb020', true, sp.name); this.audio.legendary(); this.cam.shake(0.8); this.slowmo = 0.9; }
           if (sp.boss) { this.ui.toast('HOOKED THE BOSS!', '#ff5a4a', true, 'Counter its pulls with A / D!'); this.cam.shake(1.2); this.slowmo = 1.1; }
           else if (e.fish.kg > this.stats.lineStrength * 0.5 && !this.save.achievements.includes('fighttip')) {
@@ -1176,7 +1431,7 @@ export class Game {
           const real = e.catches.filter((c) => !speciesById.get(c.id)?.junk);
           if (real.length) {
             this.combo.n = this.time < this.combo.until ? this.combo.n + 1 : 1;
-            this.combo.until = this.time + 50;
+            this.combo.until = this.time + 50 + perkValue(this.save, 'combo');
             const mult = this.comboMult();
             if (this.combo.n >= 2) {
               for (const c of e.catches) c.value = Math.round(c.value * mult);
@@ -1235,6 +1490,11 @@ export class Game {
         this.pendingLand = null;
         const ctx = { zone: pl.zone, depth: pl.maxDepth, night: this.tw.isNight, weather: this.tw.effective() };
         const res = landCatch(this.save, pl.catches, this.stats.cooler, ctx);
+        const real = pl.catches.filter((c) => !speciesById.get(c.id)?.junk);
+        const lens = real.map((c) => { const sp = speciesById.get(c.id)!; return { value: c.value, length: sp.size * c.size * (sp.boss ? 1 : 1.5) }; });
+        if (real.length) this.catchLog.push({ t: this.time, n: real.length, value: lens.reduce((a, b) => a + b.value, 0), len: Math.max(...lens.map((l) => l.length)) });
+        if (this.catchLog.length > 60) this.catchLog.shift();
+        if (this.tourney && lens.length) this.tourney.add(lens);
         const cast = { zone: pl.zone, maxDepth: pl.maxDepth, night: ctx.night, weather: ctx.weather };
         const done = progressContracts(this.save, res.kept.concat(res.released), cast);
         questEvent(this.save, { catches: res.kept.concat(res.released), cast });
@@ -1244,6 +1504,7 @@ export class Game {
         fillContracts(this.save, this.contractRand, this.stats.lineLength, this.stats.hooks);
         if (res.newSpecies.length) this.audio.newSpecies();
         for (const id of res.newSpecies) this.ui.toast('NEW SPECIES!', '#7fe0ff', true, speciesById.get(id)!.name);
+        for (const id of res.newShiny) this.ui.toast('SHINY LOGGED!', '#ff9af0', true, `${speciesById.get(id)!.name} joins your shiny collection`);
         for (const c of done) { this.ui.contractDone(c); this.audio.cash(); }
         if (pl.catches.some((c) => speciesById.get(c.id)?.boss)) { this.ui.banner('BOSS DEFEATED', speciesById.get(pl.catches.find((c) => speciesById.get(c.id)?.boss)!.id)!.name, 'A trophy for the ages!', false, 5000); this.audio.legendary(); }
         if (this.save.tutorial === 1 && res.kept.length) this.save.tutorial = 2;
@@ -1252,8 +1513,16 @@ export class Game {
         this.refreshHud();
         this.persist();
         if (res.kept.length + res.released.length > 0) {
-          this.unlockForUI();
-          this.ui.showCatch(res, coolerValue(this.save), () => { this.input.lock(); this.checkQuest(); });
+          const all = res.kept.concat(res.released);
+          const big = this.save.settings.summaries === 'always' || res.newSpecies.length > 0 || res.newShiny.length > 0 || res.records.length > 0 || res.released.length > 0 || res.pearls > 0
+            || all.length >= 6 || all.some((c) => { const sp = speciesById.get(c.id)!; return sp.boss || sp.rarity === 'legendary' || sp.rarity === 'epic'; });
+          if (big) {
+            this.unlockForUI();
+            this.ui.showCatch(res, coolerValue(this.save), () => { this.input.lock(); this.checkQuest(); });
+          } else {
+            this.ui.catchCard(res, coolerValue(this.save));
+            this.checkQuest();
+          }
         } else this.ui.toast('Nothing this time...', '#fff', false, 'Steer the lure into fish!');
       }
     }
@@ -1343,6 +1612,14 @@ export class Game {
       c.waterSide = -1;
       c.fovTarget = 1.0;
       c.minPitch = -0.9;
+      // plunging: tilt to look down past the lure at what's coming, and widen the view with speed
+      const plunge = clamp((-f.lureVel.y - 5) / 25, 0, 1);
+      if (plunge > 0 && !f.fighting) {
+        c.pitch = damp(c.pitch, 0.55 + plunge * 0.5, 1.6 * plunge, dt);
+        c.desired.y += f.lureVel.y * 0.25;
+        c.distTarget += plunge * 4;
+        c.fovTarget = 1.0 + plunge * 0.25;
+      }
     } else if (f.state === 'flight') {
       c.desired.copy(f.lure);
       c.distTarget = 11;
@@ -1378,7 +1655,7 @@ export class Game {
         if (tr.t > 2.6) this.trophy = null;
       }
     }
-    c.update(dt, this.water, heightAt);
+    c.update(dt, this.camWater, heightAt);
     this.camUnder = c.pos.y < this.water(c.pos.x, c.pos.z) - 0.05;
     this.underwater = damp(this.underwater, this.camUnder ? 1 : 0, 10, dt);
   }
@@ -1395,6 +1672,32 @@ export class Game {
           max: 5, size: 0.04 + Math.random() * 0.05, r: 0.8, g: 0.9, b: 0.85, a: env.voidAmount > 0.5 ? 0 : 0.6, kind: env.voidAmount > 0.5 ? 3 : 4 });
       }
       if (f.state === 'under' && f.lureVel.length() > 1.5 && Math.random() < dt * 12) fx.bubbles(f.lure, 1, 0.2);
+      const cd = Math.max(0, -c.y);
+      // marine snow drifting down, thicker in the deep
+      for (let i = 0; i < dt * (20 + Math.min(cd, 600) * 0.12); i++) {
+        fx.spawn({ x: c.x + fx.rnd() * 30, y: c.y + fx.rnd() * 20, z: c.z + fx.rnd() * 30, vx: fx.rnd() * 0.15, vy: -0.25, vz: fx.rnd() * 0.15,
+          max: 6, size: 0.035 + Math.random() * 0.04, r: 0.9, g: 0.95, b: 0.9, a: 0.55, kind: 4 });
+      }
+      // bioluminescent plankton sparkles below the twilight zone, stirred up by the lure
+      if (cd > 60) {
+        const k = Math.min(1, (cd - 60) / 300);
+        for (let i = 0; i < dt * 30 * k; i++) {
+          fx.spawn({ x: c.x + fx.rnd() * 25, y: c.y + fx.rnd() * 15, z: c.z + fx.rnd() * 25, vy: 0.05, max: 3 + Math.random() * 2, size: 0.07,
+            r: 0.2, g: 1.2, b: 1.4, a: 0, kind: 3 });
+        }
+        if (f.state === 'under' && f.lureVel.length() > 4) {
+          for (let i = 0; i < dt * 40 * k; i++) fx.spawn({ x: f.lure.x + fx.rnd() * 1.2, y: f.lure.y + fx.rnd(), z: f.lure.z + fx.rnd() * 1.2, max: 1.4, size: 0.1,
+            r: 0.3, g: 1.4, b: 1.6, a: 0, kind: 3 });
+        }
+      }
+      // speed streaks while plunging
+      if (f.state === 'under' && f.lureVel.y < -12) {
+        const k = Math.min(1, (-f.lureVel.y - 12) / 40);
+        for (let i = 0; i < dt * 60 * k; i++) {
+          fx.spawn({ x: f.lure.x + fx.rnd() * 14, y: f.lure.y - 6 - Math.random() * 10, z: f.lure.z + fx.rnd() * 14, vy: -f.lureVel.y * 0.6, max: 0.5, size: 0.05,
+            r: 0.7, g: 0.9, b: 1, a: 0.35, kind: 6, stretch: 30 });
+        }
+      }
       // light shafts near the surface in daylight
       const day = 1 - this.r.frame.night;
       if (c.y > -70 && day > 0.3 && Math.random() < dt * 5 * day) {
@@ -1425,15 +1728,74 @@ export class Game {
           fx.spawn({ x: c.x + fx.rnd() * 30, y: c.y + 8 + Math.random() * 8, z: c.z + fx.rnd() * 30, vx: 2 * this.tw.storm, vy: -22, max: 0.9, size: 0.02, r: 0.75, g: 0.8, b: 0.9, a: 0.5, kind: 6, stretch: 20 });
         }
       }
-      const sp = Math.abs(this.boat.speed);
-      this.spray -= dt;
-      if (sp > 8 && this.spray <= 0) {
-        this.spray = 0.03;
-        const fw = this.boat.forward;
-        const side = Math.random() < 0.5 ? 1 : -1;
-        fx.spawn({ x: this.boat.pos.x + fw.x * 3 + fw.z * side, y: 0.4, z: this.boat.pos.z + fw.z * 3 - fw.x * side,
-          vx: fw.z * side * 3 + fw.x * sp * 0.3, vy: 2 + sp * 0.12, vz: -fw.x * side * 3 + fw.z * sp * 0.3, max: 0.7, size: 0.2, r: 1, g: 1, b: 1, a: 0.9, kind: 4, gravity: 12 });
+      // spray blown off the lips of breakers on nearby beaches
+      if (this.r.frame.breakers > 0) {
+        for (let k = 0; k < 24; k++) {
+          const a = Math.random() * Math.PI * 2, d = 12 + Math.random() * 120;
+          const bx = c.x + Math.cos(a) * d, bz = c.z + Math.sin(a) * d;
+          const br = breakerAt(bx, bz, this.r.frame.time);
+          if (!br || Math.random() > br.k) continue;
+          for (let q = 0; q < 3; q++) {
+            fx.spawn({ x: bx + fx.rnd() * 0.8, y: 0.4 + Math.random() * 0.3, z: bz + fx.rnd() * 0.8, vx: br.dx * (2 + Math.random() * 2) + fx.rnd(), vy: 1.5 + Math.random() * 2.5,
+              vz: br.dz * (2 + Math.random() * 2) + fx.rnd(), max: 0.7 + Math.random() * 0.5, size: 0.06 + Math.random() * 0.08, r: 1, g: 1, b: 1, a: 0.85, kind: 4, gravity: 9 });
+          }
+          if (Math.random() < 0.3) fx.spawn({ x: bx, y: 0.8, z: bz, vx: br.dx * 1.5, vy: 0.8, vz: br.dz * 1.5, max: 1.6, size: 0.6, grow: 1.8, drag: 1, r: 1, g: 1, b: 1, a: 0.12, kind: 0 });
+        }
       }
+      // wake trail cosmetic
+      this.trailT -= dt;
+      if (this.trail !== 'trail-none' && Math.abs(this.boat.speed) > 3 && this.trailT <= 0) {
+        this.trailT = 0.03;
+        const bw = this.boat.forward;
+        const tx = this.boat.pos.x - bw.x * 3.4, tz = this.boat.pos.z - bw.z * 3.4;
+        const hueC = (h: number): [number, number, number] => [0.5 + 0.5 * Math.cos(6.283 * h), 0.5 + 0.5 * Math.cos(6.283 * (h - 0.333)), 0.5 + 0.5 * Math.cos(6.283 * (h - 0.667))];
+        for (let k = 0; k < 2; k++) {
+          const px = tx + fx.rnd() * 1.2, pz = tz + fx.rnd() * 1.2;
+          switch (this.trail) {
+            case 'trail-rainbow': { const c2 = hueC(this.time * 0.6 + k * 0.1); fx.spawn({ x: px, y: 0.5, z: pz, vy: 0.6, max: 1.6, size: 0.35, grow: 0.4, r: c2[0] * 1.6, g: c2[1] * 1.6, b: c2[2] * 1.6, a: 0, kind: 0 }); break; }
+            case 'trail-sparkle': fx.spawn({ x: px, y: 0.4 + Math.random(), z: pz, vy: 0.4, max: 1.2, size: 0.3, r: 1.8, g: 1.4, b: 0.5, a: 0, kind: 3 }); break;
+            case 'trail-fire': fx.spawn({ x: px, y: 0.3, z: pz, vx: fx.rnd() * 0.5, vy: 1.5 + Math.random(), vz: fx.rnd() * 0.5, max: 0.9, size: 0.3, grow: -0.2, r: 2, g: 0.7, b: 0.15, a: 0, kind: 0 }); break;
+            case 'trail-bubbles': fx.spawn({ x: px, y: 0.2, z: pz, vy: 0.5, max: 2, size: 0.18 + Math.random() * 0.15, r: 0.8, g: 0.95, b: 1, a: 0.6, kind: 1 }); break;
+            case 'trail-ghost': fx.spawn({ x: px, y: 0.6, z: pz, vy: 0.3, max: 2.2, size: 0.6, grow: 0.8, r: 0.3, g: 1.4, b: 0.7, a: 0, kind: 0 }); break;
+            case 'trail-stars': fx.spawn({ x: px, y: 0.8 + Math.random(), z: pz, vy: 0.2, max: 1.8, size: 0.45, r: 1.2, g: 1.3, b: 2, a: 0, kind: 3 }); break;
+          }
+        }
+      }
+      // bow spray: two sheets peeling off the stem, and a burst when the bow slams into a wave
+      const sp = Math.abs(this.boat.speed);
+      const b = this.boat;
+      const pitchRate = (b.pitch - this.lastPitch) / Math.max(dt, 1e-3);
+      this.lastPitch = b.pitch;
+      this.spray -= dt;
+      const fw = b.forward;
+      const bowX = b.pos.x + fw.x * 3.1, bowZ = b.pos.z + fw.z * 3.1;
+      if (sp > 6 && this.spray <= 0) {
+        this.spray = 0.02;
+        const n = 2 + Math.floor(Math.min(sp, 60) / 8);
+        for (let k = 0; k < n; k++) {
+          const side = Math.random() < 0.5 ? 1 : -1;
+          const out = 2 + Math.random() * 2 + sp * 0.04;
+          fx.spawn({ x: bowX + fw.z * side * 0.9, y: b.y + 0.2, z: bowZ - fw.x * side * 0.9,
+            vx: fw.z * side * out + fw.x * sp * 0.35, vy: 1.8 + sp * 0.1 + Math.random() * 1.5, vz: -fw.x * side * out + fw.z * sp * 0.35,
+            max: 0.5 + Math.random() * 0.4, size: 0.05 + Math.random() * 0.07, r: 1, g: 1, b: 1, a: 0.9, kind: 4, gravity: 12 });
+        }
+        if (sp > 14 && Math.random() < 0.5) {
+          const side = Math.random() < 0.5 ? 1 : -1;
+          fx.spawn({ x: bowX + fw.z * side * 1.2, y: b.y + 0.6, z: bowZ - fw.x * side * 1.2, vx: fw.z * side * 2 + fw.x * sp * 0.5, vy: 1.2,
+            vz: -fw.x * side * 2 + fw.z * sp * 0.5, max: 0.9, size: 0.5, grow: 2.2, drag: 1.5, r: 1, g: 1, b: 1, a: 0.14, kind: 0 });
+        }
+      }
+      if (sp > 10 && pitchRate > 0.35 && this.slamCd <= 0) {
+        this.slamCd = 0.5;
+        for (let k = 0; k < 18 + sp * 0.3; k++) {
+          const side = fx.rnd();
+          fx.spawn({ x: bowX + fw.z * side * 1.4, y: b.y + 0.3, z: bowZ - fw.x * side * 1.4,
+            vx: fw.z * side * 5 + fw.x * sp * 0.45 + fx.rnd(), vy: 3 + Math.random() * 4 + sp * 0.05, vz: -fw.x * side * 5 + fw.z * sp * 0.45 + fx.rnd(),
+            max: 0.8 + Math.random() * 0.5, size: 0.06 + Math.random() * 0.1, r: 1, g: 1, b: 1, a: 0.9, kind: 4, gravity: 11 });
+        }
+        if (sp > 18) this.cam.shake(0.12);
+      }
+      this.slamCd -= dt;
     }
     for (const vt of this.scenery.volcanoTops) {
       if (vt.distanceXZ(c) < 2600 && Math.random() < dt * 5) fx.smoke(vt.x, vt.y, vt.z, 0.22, 10);
@@ -1540,6 +1902,19 @@ export class Game {
     this.env.update(c.pos.x, c.pos.z, dt);
     const camDepth = Math.max(0, -c.pos.y);
     this.env.apply(fr, camDepth, this.camUnder, this.tw);
+    // blood moon: a red moon, crimson haze and a sea that glows like wine
+    if (this.events.bloodMoon) {
+      const k = fr.night;
+      const mix3 = (a: [number, number, number], b: [number, number, number], t: number): [number, number, number] => [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t];
+      fr.sunColor = mix3(fr.sunColor, [1.1, 0.16, 0.1], 0.9 * k);
+      fr.sunIntensity *= 1 + 0.5 * k;
+      fr.skyTop = mix3(fr.skyTop, [0.05, 0.004, 0.006], 0.7 * k);
+      fr.skyHorizon = mix3(fr.skyHorizon, [0.3, 0.02, 0.03], 0.75 * k);
+      fr.fogColor = mix3(fr.fogColor, [0.2, 0.015, 0.02], 0.75 * k);
+      fr.waterShallow = mix3(fr.waterShallow, [0.35, 0.03, 0.05], 0.5 * k);
+      fr.ambient = mix3(fr.ambient, [0.6, 0.15, 0.15], 0.5 * k);
+      fr.stars *= 1 - 0.5 * k;
+    }
     this.tw.lightDir(fr.sunDir);
     fr.oceanOffsetX = Math.round(c.pos.x / 8) * 8;
     fr.oceanOffsetZ = Math.round(c.pos.z / 8) * 8;
@@ -1555,11 +1930,37 @@ export class Game {
     setPlanet(fr.planetA, fr.planetAColor, planets[0]);
     setPlanet(fr.planetB, fr.planetBColor, planets[1]);
     fr.lowGravity = realmById(activeRealm()).gravity < 0.9 ? 1 : 0;
+    // wind sea for the FFT ocean, and buoyancy read back from it
+    const ws = fr.waveScale;
+    const wa = this.time * 0.004;
+    // stronger wind grows longer, taller waves (height ~ speed squared); calm seas also get a smaller spectrum
+    r.fft.setWind({ dirX: Math.cos(0.6 + Math.sin(wa) * 0.4), dirZ: Math.sin(0.6 + Math.sin(wa) * 0.4), speed: Math.round(Math.min(6 + ws * 3.2, 17) * 2) / 2,
+      choppy: 0.9 + this.tw.storm * 0.35, amp: Math.round(clamp(0.3 + ws * 0.25, 0.35, 0.9) * 20) / 20 });
+    const ahead = this.cam.forwardXZ;
+    const pts = [...this.boat.hullPoints(), { x: c.pos.x, z: c.pos.z }, { x: this.fishing.lure.x, z: this.fishing.lure.z },
+      { x: c.pos.x + ahead.x * 2, z: c.pos.z + ahead.z * 2 }];
+    const hts = r.fft.heights;
+    for (let i = 0; i < pts.length; i++) {
+      if (i < 4) this.boat.fft[i] = Number.isFinite(hts[i]) ? hts[i] : 0;
+      this.fftQ[i * 3] = pts[i].x; this.fftQ[i * 3 + 1] = pts[i].z; this.fftQ[i * 3 + 2] = hts[i];
+    }
+    r.fft.setQueries(pts);
+    fr.rainbow = this.camUnder ? 0 : this.rainbow;
+    // half-submerged lens and drops on it after surfacing
+    fr.camWater = this.water(c.pos.x, c.pos.z);
+    const lens = r.lens;
+    this.underTime = this.camUnder ? this.underTime + dt : 0;
+    if (this.wasUnder && !this.camUnder && this.lastUnderTime > 0.6 && this.fishing.state !== 'idle') { lens.drops = 1; lens.dropTime = 0; }
+    if (this.camUnder) this.lastUnderTime = this.underTime;
+    this.wasUnder = this.camUnder;
+    lens.dropTime += dt;
+    lens.drops = this.camUnder ? 0 : Math.max(0, 1 - lens.dropTime / 4);
     fr.boatX = this.boat.pos.x;
     fr.boatZ = this.boat.pos.z;
     fr.boatHeading = this.boat.heading;
     fr.boatSpeed = Math.abs(this.boat.speed);
     fr.wake.set(this.boat.wake);
+    this.life.wakeSources(this.boat.pos, fr.whaleA, fr.whaleB);
     const f = this.fishing;
     if (f.state === 'under' && this.stats.lampRadius > 0) {
       fr.lampPos.set(f.lure.x, f.lure.y + 0.6, f.lure.z);
@@ -1579,7 +1980,26 @@ export class Game {
     this.boat.draw(r, this.a, this.time);
     f.draw(r, this.a, c.pos, this.time, this.boat.rodTip);
     const up = new Vec3(0, 1, 0);
-    const drawFish = (actor: FishActor) => f.drawFish(r, this.a, actor, up);
+    const drawFish = (actor: FishActor) => {
+      f.drawFish(r, this.a, actor, up);
+      const gl = actor.sp.glow ?? 0;
+      if (gl > 0.35 && actor.pos.distanceTo(c.pos) < 90) {
+        const ic = actor.inst.c;
+        r.light(actor.pos.x, actor.pos.y, actor.pos.z, 5 + actor.length * 3, ic[0], ic[1], ic[2], Math.min(3, gl * 1.6));
+      }
+    };
+    // scene lights: lamps by night, lava, crystals and portals always
+    const night = fr.night;
+    for (const l of this.scenery.lights) {
+      if (l.pos.distanceTo(c.pos) - l.radius > 450) continue;
+      const fl = l.flicker ? 1 + (Math.sin(this.time * 7 + l.pos.x) + Math.sin(this.time * 13.3 + l.pos.z)) * l.flicker * 0.5 : 1;
+      r.light(l.pos.x, l.pos.y, l.pos.z, l.radius, l.color[0], l.color[1], l.color[2], l.intensity * fl * (l.night ? 0.15 + 0.85 * night : 1));
+    }
+    if (night > 0.2) {
+      const lp = new Vec3(0, 3.3, 1.1).applyMat4(this.boat.matrix);
+      r.light(lp.x, lp.y, lp.z, 13, 1, 0.8, 0.5, 1.6 * night);
+    }
+    for (const b of this.tw.bolts) r.light(b.pos.x, 120, b.pos.z, 900, 0.8, 0.85, 1, 5 * Math.max(0, 1 - b.age / 0.5));
     this.spots.draw(r, this.a, c.pos, this.time, drawFish);
     this.life.draw(r, this.a, c.pos, this.time, drawFish);
     if (activeRealm() === 'blue' && !this.camUnder && this.scenery.aquarium.pos.distanceXZ(c.pos) < 160) {
@@ -1589,6 +2009,8 @@ export class Game {
     for (const fl of this.flyers) if (fl.t >= 0) drawFish(fl.actor);
     for (const d of this.debugActors) drawFish(d);
     this.events.draw(r, this.time);
+    this.kraken.draw(r, this.a, this.time, this.fx);
+    if (f.state === 'under') this.depths.draw(r, c.pos, this.time, drawFish);
     this.drawPortals();
     const tm = this.save.treasureMap;
     if (tm) {

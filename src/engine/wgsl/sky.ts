@@ -71,7 +71,7 @@ fn sphereExit(oy: f32, d: vec3f, r: f32) -> f32 {
 
 @fragment fn fs(in: FSVOut) -> @location(0) vec4f {
   let dir = hemiOctDecode(in.uv * 2.0 - 1.0);
-  if (dir.y < 0.004 || frame.cloudColor.w < 0.01) { return vec4f(0.0, 0.0, 0.0, 1.0); }
+  if (dir.y < 0.004 || (frame.cloudColor.w < 0.01 && frame.atmo.y < 0.01)) { return vec4f(0.0, 0.0, 0.0, 1.0); }
   let RP = 60000.0;
   let h0 = frame.cloud.x;
   let h1 = frame.cloud.x + frame.cloud.y;
@@ -94,7 +94,8 @@ fn sphereExit(oy: f32, d: vec3f, r: f32) -> f32 {
   var trans = 1.0;
   var scat = vec3f(0.0);
   var firstHit = t1;
-  for (var i = 0; i < steps; i++) {
+  let cumulus = frame.cloudColor.w >= 0.01;
+  for (var i = 0; i < select(0, steps, cumulus); i++) {
     let t = t0 + (f32(i) + jitter) * dt;
     let pl = vec3f(dir.x * t, oy + dir.y * t, dir.z * t);
     let height = length(pl) - RP;
@@ -123,6 +124,20 @@ fn sphereExit(oy: f32, d: vec3f, r: f32) -> f32 {
       trans *= Tr;
       if (trans < 0.015) { break; }
     }
+  }
+  // wispy cirrus high above, stretched by the jet stream and lit from behind near the sun
+  if (frame.atmo.y > 0.01 && trans > 0.02) {
+    let tc = sphereExit(oy, dir, RP + 8500.0);
+    let pc = dir.xz * tc + frame.camPos.xz + cloudWind() * 2.5;
+    let q = pc * 0.00011;
+    let rq = vec2f(q.x * 0.8 + q.y * 0.6, -q.x * 0.6 + q.y * 0.8) * vec2f(1.0, 4.5);
+    let warp = fbm(q * 1.7 + 11.0);
+    let streak = smoothstep(0.52, 0.86, fbm(rq + vec2f(warp * 0.9, 0.0)));
+    let patchy = smoothstep(0.35, 0.65, fbm(q * 0.45 + 4.0));
+    let a = streak * patchy * frame.atmo.y * 0.55 * smoothstep(0.0, 0.1, dir.y);
+    let cirCol = albedo * (sunI * (0.35 + 1.4 * pow(max(cosT, 0.0), 8.0)) * 0.45 + ambTop * 0.85);
+    scat += trans * cirCol * a;
+    trans *= 1.0 - a;
   }
   // aerial perspective: distant clouds melt into the horizon haze
   let haze = 1.0 - exp(-firstHit * 0.000045);

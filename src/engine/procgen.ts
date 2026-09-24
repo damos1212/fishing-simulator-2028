@@ -45,7 +45,7 @@ class Builder {
   }
 
   /** Double-sided flat blade from a spine; width per point, bends with the spine. */
-  blade(spine: Vec3[], widths: number[], side: Vec3, c: RGB, c2: RGB) {
+  blade(spine: Vec3[], widths: number[], side: Vec3, c: RGB, c2: RGB, alpha?: (t: number) => number) {
     const up = new Vec3();
     const idx: [number, number][] = [];
     for (let k = 0; k < spine.length; k++) {
@@ -53,8 +53,9 @@ class Builder {
       const col: RGB = [c[0] + (c2[0] - c[0]) * t, c[1] + (c2[1] - c[1]) * t, c[2] + (c2[2] - c[2]) * t];
       const dir = (k < spine.length - 1 ? spine[k + 1].clone().sub(spine[k]) : spine[k].clone().sub(spine[k - 1])).normalize();
       up.copy(dir).cross(side).normalize();
-      const a = this.vert(spine[k].clone().addScaled(side, -widths[k]), up, col);
-      const b = this.vert(spine[k].clone().addScaled(side, widths[k]), up, col);
+      const al = alpha ? alpha(t) : 1;
+      const a = this.vert(spine[k].clone().addScaled(side, -widths[k]), up, col, al);
+      const b = this.vert(spine[k].clone().addScaled(side, widths[k]), up, col, al);
       idx.push([a, b]);
     }
     for (let k = 0; k < idx.length - 1; k++) this.quad(idx[k][0], idx[k + 1][0], idx[k + 1][1], idx[k][1]);
@@ -127,6 +128,42 @@ export function seagrassMesh(): MeshData {
     b.blade(spine, [0.08, 0.07, 0.06, 0.04, 0.005], new Vec3(Math.cos(a + 1.3), 0, Math.sin(a + 1.3)), c1, c2);
   }
   return b.build('seagrass');
+}
+
+/** Vertex alpha for the foliage material with ambient occlusion rising from the base (see wgsl/mesh.ts). */
+const foliage = (t: number) => (5 + (0.45 + 0.55 * t) * 0.999) / 16;
+
+/** A tuft of grass blades for island meadows (~0.7 m tall). */
+export function grassMesh(tint = '#6fc04a', tip = '#c8e87a'): MeshData {
+  const b = new Builder();
+  const r = rng(71);
+  const c1 = hex(tint), c2 = hex(tip);
+  for (let i = 0; i < 11; i++) {
+    const a = r() * Math.PI * 2, d = r() * 0.35;
+    const base = new Vec3(Math.cos(a) * d, 0, Math.sin(a) * d);
+    const h = 0.35 + r() * 0.5;
+    const lean = new Vec3(Math.cos(a), 0, Math.sin(a)).scale(0.12 + r() * 0.2);
+    const spine = [0, 1, 2, 3].map((k) => base.clone().add(new Vec3(0, (k / 3) * h, 0)).addScaled(lean, (k / 3) ** 2));
+    b.blade(spine, [0.035, 0.03, 0.02, 0.002], new Vec3(Math.cos(a + 1.3), 0, Math.sin(a + 1.3)), c1, c2, foliage);
+  }
+  return b.build('grass');
+}
+
+/** A little flower: stem, leaves and a ring of petals. */
+export function flowerMesh(petal: string): MeshData {
+  const b = new Builder();
+  const green = hex('#4a9a3a'), green2 = hex('#7ac050'), pc = hex(petal), center = hex('#ffd23a');
+  const h = 0.55;
+  b.blade([new Vec3(0, 0, 0), new Vec3(0.02, h * 0.5, 0), new Vec3(0, h, 0)], [0.015, 0.012, 0.01], new Vec3(1, 0, 0), green, green2, foliage);
+  b.blade([new Vec3(0, 0.05, 0), new Vec3(0.12, 0.15, 0.03), new Vec3(0.2, 0.18, 0.05)], [0.01, 0.04, 0.005], new Vec3(0, 0, 1), green, green2, foliage);
+  const top = new Vec3(0, h, 0);
+  for (let k = 0; k < 6; k++) {
+    const a = (k / 6) * Math.PI * 2;
+    const d = new Vec3(Math.cos(a), 0.25, Math.sin(a));
+    b.blade([top, top.clone().addScaled(d, 0.07), top.clone().addScaled(d, 0.13)], [0.02, 0.045, 0.01], new Vec3(-Math.sin(a), 0, Math.cos(a)), pc, pc, () => (10 + 0.95 * 0.999) / 16);
+  }
+  b.sphere(top.clone().add(new Vec3(0, 0.015, 0)), 0.03, center, 8, 6, (0 + 0.999) / 16);
+  return b.build('flower');
 }
 
 export function palmMesh(): MeshData {
@@ -210,4 +247,32 @@ export function flagMesh(): MeshData {
   b.cylinder(0.05, 0.05, 6, hex('#e8e4dc'), 8);
   b.blade([new Vec3(0, 5.8, 0), new Vec3(0.8, 5.5, 0), new Vec3(1.6, 5.2, 0)], [0.5, 0.35, 0.02], new Vec3(0, 1, 0), hex('#ffd23a'), hex('#ff7a1a'));
   return b.build('flag');
+}
+
+/** Unit tentacle segment along +Z (radius 1 at the base, tapering): purple skin with pale suckers underneath. */
+export function tentacleSegmentMesh(): MeshData {
+  const b = new Builder();
+  const skin = hex('#8a3ac0'), belly = hex('#f0a0d8'), sucker = hex('#fff4fa');
+  const segs = 14, rings = 5;
+  const idx: number[][] = [];
+  for (let k = 0; k <= rings; k++) {
+    const z = k / rings;
+    const rad = 1 - 0.14 * z;
+    const ring: number[] = [];
+    for (let s2 = 0; s2 < segs; s2++) {
+      const a = (s2 / segs) * Math.PI * 2;
+      const n = new Vec3(Math.cos(a), Math.sin(a), 0);
+      // the underside (-Y) is pale and dotted with suckers
+      const under = Math.max(0, -n.y);
+      const dot = under > 0.7 && (k === 1 || k === 3) && s2 % 2 === 0;
+      const c: RGB = dot ? sucker : [skin[0] + (belly[0] - skin[0]) * under, skin[1] + (belly[1] - skin[1]) * under, skin[2] + (belly[2] - skin[2]) * under];
+      ring.push(b.vert(new Vec3(n.x * rad * (dot ? 1.08 : 1), n.y * rad * (dot ? 1.08 : 1), z), n, c));
+    }
+    idx.push(ring);
+  }
+  for (let k = 0; k < rings; k++) for (let s2 = 0; s2 < segs; s2++) {
+    const n2 = (s2 + 1) % segs;
+    b.quad(idx[k][s2], idx[k + 1][s2], idx[k + 1][n2], idx[k][n2]);
+  }
+  return b.build('tentacle');
 }

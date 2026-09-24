@@ -1,11 +1,13 @@
 // DOM overlay: title, HUD, popups, catch summary, shop, map and pause menu.
 import { BOSS_FOR_ZONE, CATCHABLE, RARITY_COLOR, speciesById, type WeatherKind } from '../data/fish';
 import { COSMETICS, type CosmeticKind, ITEMS, type ItemId } from '../data/items';
+import { type PerkId, PERKS } from '../data/perks';
 import { TRACKS, type TrackId } from '../data/upgrades';
 import { activeRealm, activeRealmInfo, ALL_ZONES, REALMS, realmZones } from '../data/zones';
 import { clamp } from '../engine/math';
 import { type Npc, NPCS, QUESTS } from '../data/quests';
-import { coolerValue, DEX_TOTAL, formatMoney, type LandResult, masteredZones, nextTier, type SaveData } from '../game/economy';
+import { coolerValue, DEX_TOTAL, formatMoney, type LandResult, masteredZones, nextTier, perkCost, perkRank, perkUnlocked, perkValue, type SaveData } from '../game/economy';
+import type { Standing, TourneyKind } from '../game/tournament';
 import { ACHIEVEMENTS, type Contract, contractGoal } from '../game/progress';
 import { heightAt, WORLD_R } from '../world/terrain';
 import { WEATHER_LABEL } from '../world/timeweather';
@@ -46,6 +48,10 @@ export interface ShopHandlers {
   travel: (i: number) => void;
   close: () => void;
   statText: (id: TrackId, tier: number) => string;
+  buyPerk: (id: PerkId) => void;
+  /** Contests on offer at the harbor board (null while one is running). */
+  tourneys: () => { kind: TourneyKind; title: string; desc: string; fee: number }[] | null;
+  startTourney: (kind: TourneyKind) => void;
 }
 
 export interface PauseHandlers {
@@ -54,7 +60,7 @@ export interface PauseHandlers {
   change: (s: SaveData['settings']) => void;
 }
 
-type ShopTab = TrackId | 'sell' | 'dex' | 'supplies' | 'style' | 'contracts' | 'travel' | 'trophies';
+type ShopTab = TrackId | 'sell' | 'dex' | 'supplies' | 'style' | 'contracts' | 'travel' | 'trophies' | 'perks' | 'tourney';
 
 export class UI {
   private el: Record<string, HTMLElement> = {};
@@ -273,6 +279,31 @@ export class UI {
       <div class="qt">${esc(q.title)}</div>${q.goal > 1 ? `<div class="cp"><i style="width:${(v / q.goal) * 100}%"></i></div>` : ''}<small>${count}${count ? ' &middot; ' : ''}${esc(q.npc.name)}</small>`;
     if (el.innerHTML !== html) el.innerHTML = html;
   }
+  /** Break-free meter for the Kraken. */
+  struggle(show: boolean, progress = 0, left = 0) {
+    let el = this.el.struggle;
+    if (!show) { el?.classList.add('hidden'); return; }
+    if (!el) {
+      el = this.el.struggle = h(`<div id="struggle"><div class="label display">MASH <kbd>SPACE</kbd> / <kbd>CLICK</kbd>!</div><div class="track"><i></i></div><div class="time"></div></div>`);
+      this.el.hud.appendChild(el);
+    }
+    el.classList.remove('hidden');
+    (el.querySelector('i') as HTMLElement).style.width = `${progress * 100}%`;
+    el.querySelector('.time')!.textContent = `${left.toFixed(1)}s`;
+    el.classList.toggle('danger', left < 3);
+  }
+
+  /** Live tournament standings. */
+  tourney(t: { title: string; left: number; standings: Standing[]; unit: (v: number) => string } | null) {
+    let el = this.el.tourney;
+    if (!t) { el?.classList.add('hidden'); return; }
+    if (!el) { el = this.el.tourney = h(`<div id="tourney"></div>`); this.el.hud.appendChild(el); }
+    el.classList.remove('hidden');
+    const m = Math.floor(t.left / 60), sec = Math.floor(t.left % 60);
+    el.innerHTML = `<div class="tt display">${esc(t.title)} <span>${m}:${sec.toString().padStart(2, '0')}</span></div>` +
+      t.standings.map((st, i) => `<div class="row ${st.you ? 'you' : ''}"><b>${i + 1}</b><span>${esc(st.name)}</span><i>${t.unit(st.score)}</i></div>`).join('');
+  }
+
   combo(n: number, mult: number, left: number) {
     const el = this.el.combo;
     el.classList.toggle('hidden', n < 2);
@@ -576,7 +607,7 @@ export class UI {
       const rec = res.records.includes(f.id);
       return `<div class="fishrow" style="animation-delay:${i * 0.12}s">
         <div class="sw" style="background:linear-gradient(${sp.colors[0]} 50%, ${sp.colors[1]} 50%)"></div>
-        <div class="nm">${esc(sp.name)}${isNew ? '<span class="badge new">NEW!</span>' : ''}${rec ? '<span class="badge rec">RECORD</span>' : ''}${sp.boss ? '<span class="badge boss">BOSS</span>' : ''}
+        <div class="nm">${esc(sp.name)}${f.shiny ? '<span class="badge shiny">&#10022; SHINY</span>' : ''}${isNew ? '<span class="badge new">NEW!</span>' : ''}${rec ? '<span class="badge rec">RECORD</span>' : ''}${sp.boss ? '<span class="badge boss">BOSS</span>' : ''}
           <small style="color:${RARITY_COLOR[sp.rarity]}">${sp.rarity.toUpperCase()} &middot; ${(sp.size * f.size * (sp.boss ? 1 : 1.5)).toFixed(2)}m${kept ? '' : ' &middot; released (cooler full)'}</small></div>
         <div class="v">${kept ? formatMoney(f.value) : '-'}</div></div>`;
     }).join('');
@@ -595,6 +626,19 @@ export class UI {
     const key = (e: KeyboardEvent) => { if (['Space', 'Enter', 'KeyE', 'Escape'].includes(e.code)) close(); };
     setTimeout(() => window.addEventListener('keydown', key), 400);
     m.querySelector('.btn')!.addEventListener('click', close);
+  }
+
+  /** Small slide-in summary for routine hauls (no pause). */
+  catchCard(res: LandResult, cooler: number) {
+    const rows = res.kept.map((f) => {
+      const sp = speciesById.get(f.id)!;
+      return `<div class="cr ${f.shiny ? 'shiny' : ''}"><i style="background:linear-gradient(${sp.colors[0]} 50%, ${sp.colors[1]} 50%)"></i><span>${f.shiny ? '&#10022; ' : ''}${esc(sp.name)}</span><b>${formatMoney(f.value)}</b></div>`;
+    }).join('');
+    const total = res.kept.reduce((s, f) => s + f.value, 0);
+    const card = h(`<div class="catchcard"><div class="ct display">+${formatMoney(total)}</div>${rows}<small>Cooler: ${formatMoney(cooler)}</small></div>`);
+    this.el.hud.appendChild(card);
+    setTimeout(() => card.classList.add('out'), 3200);
+    setTimeout(() => card.remove(), 3700);
   }
 
   // ------------------------------------------------------------------ shop
@@ -618,6 +662,8 @@ export class UI {
       ['supplies', 'Supplies', false],
       ...TRACKS.map((t) => { const n = nextTier(save, t.id); return [t.id, t.name, !!n && save.money >= n.cost] as [ShopTab, string, boolean]; }),
       ['style', 'Style Shop', COSMETICS.some((c) => !c.quest && !save.cosmetics.owned.includes(c.id) && c.pearls <= save.pearls)],
+      ['perks', 'Angler Perks', PERKS.some((p) => { const c = perkCost(save, p.id); return c !== null && perkUnlocked(save, p.id) && save.pearls >= c; })],
+      ...(hs.harbor ? [['tourney', 'Tournaments', false] as [ShopTab, string, boolean]] : []),
       ['travel', 'Fast Travel', false],
       ['trophies', 'Trophies', false],
       ['dex', 'Fish Log', false],
@@ -663,7 +709,7 @@ export class UI {
       }).join('');
       main.querySelectorAll('[data-item]').forEach((b) => b.addEventListener('click', () => hs.buyItem((b as HTMLElement).dataset.item as ItemId, +(b as HTMLElement).dataset.n!)));
     } else if (tab === 'style') {
-      const kinds: [CosmeticKind, string][] = [['hat', 'Hats'], ['pet', 'Pets'], ['paint', 'Boat Paint'], ['flag', 'Flags'], ['lure', 'Lure Skins'], ['line', 'Fishing Line']];
+      const kinds: [CosmeticKind, string][] = [['hat', 'Hats'], ['pet', 'Pets'], ['paint', 'Boat Paint'], ['flag', 'Flags'], ['lure', 'Lure Skins'], ['line', 'Fishing Line'], ['trail', 'Wake Trails']];
       main.innerHTML = head('Style Shop', 'Spend pearls from contracts, achievements, treasure and bottles.') +
         `<div class="subtabs">${kinds.map(([k, n]) => `<div class="tab ${this.styleKind === k ? 'on' : ''}" data-kind="${k}">${n}</div>`).join('')}</div>
         <div class="grid">${COSMETICS.filter((c) => c.kind === this.styleKind).map((c) => {
@@ -680,6 +726,27 @@ export class UI {
         }).join('')}</div>`;
       main.querySelectorAll('[data-kind]').forEach((b) => b.addEventListener('click', () => { this.styleKind = (b as HTMLElement).dataset.kind as CosmeticKind; this.renderShop(save, hs); }));
       main.querySelectorAll('[data-cos]').forEach((b) => b.addEventListener('click', () => hs.buyCosmetic((b as HTMLElement).dataset.cos!)));
+    } else if (tab === 'perks') {
+      main.innerHTML = head('Angler Perks', 'Spend pearls on permanent skills. Some perks unlock others.') + `<div class="perks">${PERKS.map((p) => {
+        const rank = perkRank(save, p.id), max = p.costs.length, cost = perkCost(save, p.id), open = perkUnlocked(save, p.id);
+        const pips = Array.from({ length: max }, (_, i) => `<i class="${i < rank ? 'on' : ''}"></i>`).join('');
+        const next = cost === null ? '' : `<div class="stat">Next: ${esc(p.desc(p.values[rank + 1]))}</div>`;
+        const btn = !open ? `<button class="btn small gray" disabled>Needs ${esc(PERKS.find((x) => x.id === p.needs)!.name)}</button>`
+          : cost === null ? '<button class="btn small gray" disabled>MAXED</button>'
+          : `<button class="btn small ${save.pearls >= cost ? 'green' : 'gray'}" data-perk="${p.id}" ${save.pearls >= cost ? '' : 'disabled'}>${cost} pearls</button>`;
+        return `<div class="tier ${rank ? 'owned' : open ? 'next' : 'locked'}"><div class="ic" style="background:${p.color}">${p.icon}</div>
+          <div class="info"><b>${esc(p.name)}</b> <span class="pips">${pips}</span><div>${esc(rank ? p.desc(perkValue(save, p.id)) : p.desc(p.values[1]))}</div>${rank ? next : ''}</div>${btn}</div>`;
+      }).join('')}</div>`;
+      main.querySelectorAll('[data-perk]').forEach((b) => b.addEventListener('click', () => hs.buyPerk((b as HTMLElement).dataset.perk as PerkId)));
+    } else if (tab === 'tourney') {
+      const offers = hs.tourneys();
+      main.innerHTML = head('Harbor Tournaments', 'Pay the entry fee, then fish anywhere. Beat the local legends before the horn!') + (offers ? offers.map((o) =>
+        `<div class="tier next"><div class="ic" style="background:linear-gradient(#ffd23a,#ff7a1a)">&#127942;</div><div class="info"><b>${esc(o.title)}</b><div>${esc(o.desc)}</div>
+          <div class="stat">1st: ${formatMoney(o.fee * 6)} + 6 pearls &middot; 2nd: ${formatMoney(Math.round(o.fee * 2.5))} + 3 &middot; 3rd: ${formatMoney(Math.round(o.fee * 1.2))} + 1</div></div>
+          <button class="btn small ${save.money >= o.fee ? 'green' : 'gray'}" data-tourney="${o.kind}" ${save.money >= o.fee ? '' : 'disabled'}>Enter ${formatMoney(o.fee)}</button></div>`).join('')
+        : '<div style="font-weight:800;text-align:center">A tournament is already under way. Go fish!</div>') +
+        `<div class="stats">Tournaments entered: <b>${save.stats.tourneys}</b> &middot; won: <b>${save.stats.tourneyWins}</b></div>`;
+      main.querySelectorAll('[data-tourney]').forEach((b) => b.addEventListener('click', () => hs.startTourney((b as HTMLElement).dataset.tourney as TourneyKind)));
     } else if (tab === 'travel') {
       const d = hs.destinations();
       main.innerHTML = head('Fast Travel', 'Hop to any harbor or outpost you have discovered. Sail near new outposts to add them.') + d.map((x, i) =>
@@ -705,7 +772,8 @@ export class UI {
           return `<div class="ach ${got ? 'got' : ''}"><span>${got ? '&#127942;' : '&#128274;'}</span><div><b>${esc(a.name)}</b><div>${esc(a.desc)}</div></div><small>${a.pearls}p</small></div>`;
         }).join('')}</div>
         <h4 class="display">Records</h4><div class="stats">Fish caught: <b>${save.stats.caught}</b> &middot; Earned: <b>${formatMoney(save.stats.earned)}</b> &middot; Deepest: <b>${Math.round(save.stats.deepest)}m</b>
-        &middot; Biggest haul: <b>${save.stats.maxHaul}</b> &middot; Best cast: <b>${formatMoney(save.stats.bestCast)}</b> &middot; Treasure: <b>${save.stats.treasures}</b></div>`;
+        &middot; Biggest haul: <b>${save.stats.maxHaul}</b> &middot; Best cast: <b>${formatMoney(save.stats.bestCast)}</b> &middot; Treasure: <b>${save.stats.treasures}</b>
+        &middot; Shinies: <b>${save.stats.shinies}</b> &middot; Krakens repelled: <b>${save.stats.krakens}</b> &middot; Tournaments won: <b>${save.stats.tourneyWins}</b></div>`;
     } else if (tab === 'dex') {
       const realmZonesAll = ALL_ZONES.filter((z) => z.realm === this.dexRealm);
       if (this.dexZone !== 'all' && !realmZonesAll.some((z) => z.id === this.dexZone)) this.dexZone = 'all';
@@ -727,7 +795,7 @@ export class UI {
         for (const s of list) {
           const e = save.dex[s.id];
           const cond = [s.time === 'night' ? 'night only' : '', s.weather ? `${s.weather} only` : '', s.boss ? 'BOSS: use Boss Bait' : '', s.junk ? 'junk, anywhere' : ''].filter(Boolean).join(', ');
-          html += e ? `<div class="card"><div class="sw" style="background:linear-gradient(${s.colors[0]} 50%, ${s.colors[1]} 50%)"></div><b>${esc(s.name)}</b><span style="color:${RARITY_COLOR[s.rarity]}">${s.rarity}</span><br>x${e.caught} &middot; best ${(s.size * e.best * (s.boss ? 1 : 1.5)).toFixed(2)}m<br><i style="opacity:.7">${esc(s.flavor)}</i></div>`
+          html += e ? `<div class="card"><div class="sw" style="background:linear-gradient(${s.colors[0]} 50%, ${s.colors[1]} 50%)"></div><b>${esc(s.name)}</b><span style="color:${RARITY_COLOR[s.rarity]}">${s.rarity}</span><br>x${e.caught} &middot; best ${(s.size * e.best * (s.boss ? 1 : 1.5)).toFixed(2)}m${e.shiny ? ` &middot; <span class="shinytag">&#10022; x${e.shiny}</span>` : ''}<br><i style="opacity:.7">${esc(s.flavor)}</i></div>`
             : `<div class="card unknown"><div class="sw"></div><b>???</b>${s.depth[0]}-${s.depth[1]}m &middot; bait ${s.bait}${cond ? `<br><small>${cond}</small>` : ''}</div>`;
         }
       }
@@ -764,10 +832,14 @@ export class UI {
       <label>Sound FX <input type="range" min="0" max="1" step="0.05" value="${s.sfx}" data-k="sfx"></label>
       <label>Mouse sensitivity <input type="range" min="0.3" max="2.5" step="0.05" value="${s.sensitivity}" data-k="sensitivity"></label>
       <label>Graphics <span class="gq">${['Low', 'Medium', 'High', 'Ultra'][s.graphics] ?? 'High'}</span><input type="range" min="0" max="3" step="1" value="${s.graphics}" data-k="graphics"></label>
-      <label>Resolution <input type="range" min="0.5" max="1" step="0.25" value="${s.quality}" data-k="quality"></label>
+      <label>Render resolution <span class="rq">${Math.round(s.quality * 100)}%</span><input type="range" min="0.5" max="1" step="0.125" value="${s.quality}" data-k="quality"></label>
+      <label>Temporal anti-aliasing / upscaling <input type="checkbox" ${s.taa ? 'checked' : ''} data-k="taa"></label>
+      <label>Motion blur <input type="checkbox" ${s.motionBlur ? 'checked' : ''} data-k="motionBlur"></label>
+      <label>Auto exposure <input type="checkbox" ${s.autoExposure ? 'checked' : ''} data-k="autoExposure"></label>
       <label>Invert mouse Y <input type="checkbox" ${s.invertY ? 'checked' : ''} data-k="invertY"></label>
       <label>Screen shake <input type="checkbox" ${s.shake ? 'checked' : ''} data-k="shake"></label>
       <label>Show FPS <input type="checkbox" ${s.fps ? 'checked' : ''} data-k="fps"></label>
+      <label>Catch summary for every cast <input type="checkbox" ${s.summaries === 'always' ? 'checked' : ''} data-k="summaries"></label>
       <div class="keys"><b>WASD</b><span>Sail / steer lure</span><b>Mouse, Arrows</b><span>Look (wheel zoom; trackpad: swipe, pinch; right-drag if the mouse is free)</span><b>Hold Click / Space</b><span>Cast power / reel in</span>
         <b>Hold Shift / RMB</b><span>Dive</span><b>A / D in a fight</b><span>Counter the pull</span><b>1 - 6</b><span>Use supplies</span><b>E</b><span>Shop at docks & outposts</span><b>M</b><span>Map</span><b>H</b><span>Horn</span></div>
       <div style="font-weight:800;font-size:13px;text-align:center">Caught ${save.stats.caught} fish &middot; earned ${formatMoney(save.stats.earned)} &middot; deepest ${Math.round(save.stats.deepest)}m &middot; ${Math.round(save.stats.playTime / 60)} min played</div>
@@ -778,9 +850,11 @@ export class UI {
     this.modal = 'pause';
     m.querySelectorAll('input').forEach((inp) => inp.addEventListener('input', () => {
       const k = (inp as HTMLInputElement).dataset.k as keyof SaveData['settings'];
-      const v = inp.type === 'checkbox' ? inp.checked : parseFloat(inp.value);
-      (s as unknown as Record<string, number | boolean>)[k] = v;
+      let v: number | boolean | string = inp.type === 'checkbox' ? inp.checked : parseFloat(inp.value);
+      if (k === 'summaries') v = inp.checked ? 'always' : 'big';
+      (s as unknown as Record<string, number | boolean | string>)[k] = v;
       if (k === 'graphics') m.querySelector('.gq')!.textContent = ['Low', 'Medium', 'High', 'Ultra'][v as number];
+      if (k === 'quality') m.querySelector('.rq')!.textContent = `${Math.round((v as number) * 100)}%`;
       hs.change(s);
     }));
     m.querySelector('[data-resume]')!.addEventListener('click', () => hs.resume());

@@ -314,3 +314,34 @@ html, body { margin: 0; height: 100%; overflow: hidden; background: #0b1f33; fon
 #banner.rainbow .t1 { font-size: 34px; background: linear-gradient(90deg, #ff5a5a, #ffd23a, #7fff8a, #5ad0ff, #c070ff, #ff5a5a); background-size: 200% 100%;
   -webkit-background-clip: text; background-clip: text; color: transparent; text-shadow: none; -webkit-text-stroke: 2px var(--ink); animation: rainbow 1.2s linear infinite; }
 @keyframes rainbow { to { background-position: 200% 0; } }
+.catchcard { position: absolute; right: 16px; bottom: 150px; width: 250px; background: rgba(255, 246, 220, .95); border: 4px solid var(--ink); border-radius: 14px;
+  padding: 8px 12px; box-shadow: 0 5px 0 var(--ink); animation: cardin .35s cubic-bezier(.2,1.5,.4,1); transition: transform .45s, opacity .45s; font-weight: 800; }
+.catchcard.out { transform: translateX(120%); opacity: 0; }
+.catchcard .ct { font-size: 26px; color: #1f8a3a; }
+.catchcard .cr { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+.catchcard .cr i { width: 24px; height: 14px; border-radius: 50% 40% 40% 50%; border: 2px solid var(--ink); flex: none; }
+.catchcard .cr span { flex: 1; }
+.catchcard small { opacity: .7; font-size: 11px; }
+@keyframes cardin { from { transform: translateX(120%); } }
+
+/* kraken struggle meter */
+#struggle { position: absolute; bottom: 170px; left: 50%; transform: translateX(-50%); width: 440px; text-align: center; animation: pulse .5s infinite alternate; }
+#struggle .label { font-size: 30px; color: #fff; text-shadow: 0 3px 0 var(--ink), 0 0 18px #c060ff; margin-bottom: 6px; }
+#struggle .track { height: 30px; border: 5px solid var(--ink); border-radius: 16px; background: #2a1040; overflow: hidden; box-shadow: var(--shadow); }
+#struggle .track i { display: block; height: 100%; background: linear-gradient(90deg, #c060ff, #ff7ad8, #ffd23a); transition: width .08s; }
+#struggle .time { font-weight: 900; color: #fff; text-shadow: 0 2px 0 var(--ink); margin-top: 4px; font-size: 18px; }
+#struggle.danger .time { color: #ff6a5a; animation: shake .1s infinite; }
+@keyframes pulse { from { transform: translateX(-50%) scale(1); } to { transform: translateX(-50%) scale(1.04); } }
+/* tournament standings */
+#tourney { position: absolute; top: 200px; right: 14px; min-width: 250px; background: rgba(20, 24, 40, .78); border: 4px solid var(--ink);
+  border-radius: 14px; padding: 8px 12px; color: #fff; box-shadow: var(--shadow); font-weight: 800; }
+#tourney .tt { font-size: 18px; display: flex; justify-content: space-between; gap: 12px; color: var(--gold); }
+#tourney .row { display: grid; grid-template-columns: 22px 1fr auto; gap: 8px; font-size: 14px; opacity: .85; }
+#tourney .row.you { color: #7fff8a; opacity: 1; }
+/* perks */
+.perks .pips i { display: inline-block; width: 10px; height: 10px; border-radius: 50%; border: 2px solid var(--ink); margin-right: 3px; background: #fff; vertical-align: middle; }
+.perks .pips i.on { background: var(--gold); }
+/* shinies */
+.badge.shiny { background: linear-gradient(90deg, #ff9af0, #9af0ff, #fff09a); color: var(--ink); }
+.catchcard .cr.shiny span { background: linear-gradient(90deg, #ff9af0, #9af0ff, #fff09a); -webkit-background-clip: text; background-clip: text; color: transparent; }
+.shinytag { color: #d060d0; font-weight: 900; }

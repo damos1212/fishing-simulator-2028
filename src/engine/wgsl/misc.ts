@@ -41,9 +41,14 @@ struct VOut {
   o.wp = wp;
   return o;
 }
+@group(1) @binding(1) var sceneTex: texture_2d<f32>;
+
 @fragment fn fs(in: VOut) -> @location(0) vec4f {
   let r = length(in.uv);
   var a = 0.0;
+  // soft particles: fade where they meet solid geometry
+  let sd = abs(textureLoad(sceneTex, vec2i(in.clip.xy), 0).a);
+  let soft = clamp((sd - distance(in.wp, frame.camPos.xyz)) / 0.8, 0.0, 1.0);
   if (in.kind == 1u || in.kind == 2u) {
     a = smoothstep(1.0, 0.85, r) * smoothstep(0.55, 0.75, r);
   } else if (in.kind == 3u) {
@@ -62,6 +67,7 @@ struct VOut {
   let fogged = applyFog(in.col.rgb, in.wp);
   let fogK = select(1.0, clamp(1.0 - distance(in.wp, frame.camPos.xyz) * frame.uwColor.w * 0.8, 0.0, 1.0), frame.sunColor.w > 0.5);
   // col.a: 1 = alpha blended, 0 = additive (premultiplied output)
+  a *= soft;
   let alpha = a * in.col.a;
   let pm = select(in.col.a, 1.0, in.col.a <= 0.0);
   return vec4f(fogged * a * pm * fogK, alpha);

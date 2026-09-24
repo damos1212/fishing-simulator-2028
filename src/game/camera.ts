@@ -19,6 +19,7 @@ export class CameraRig {
   private shakeT = 0;
   /** Keep camera below (-1) or above (+1) the water, 0 = free. */
   waterSide = 1;
+  private sideOff = 0.8;
 
   get forwardXZ() { return new Vec3(-Math.sin(this.yaw), 0, -Math.cos(this.yaw)); }
   get rightXZ() { return new Vec3(Math.cos(this.yaw), 0, -Math.sin(this.yaw)); }
@@ -45,8 +46,13 @@ export class CameraRig {
       this.target.z + Math.cos(this.yaw) * cp * this.dist,
     );
     const w = water(this.pos.x, this.pos.z);
-    if (this.waterSide > 0) this.pos.y = Math.max(this.pos.y, w + 0.8);
-    else if (this.waterSide < 0) this.pos.y = Math.min(this.pos.y, w - 0.9);
+    // glide through the surface when switching sides, so the lens is briefly half in the sea
+    if (this.waterSide !== 0) {
+      const want = this.waterSide > 0 ? 0.8 : -0.9;
+      this.sideOff = snap ? want : this.sideOff + clamp(want - this.sideOff, -2.6 * dt, 2.6 * dt);
+      if (this.waterSide > 0) this.pos.y = Math.max(this.pos.y, w + this.sideOff);
+      else this.pos.y = Math.min(this.pos.y, w + this.sideOff);
+    }
     this.pos.y = Math.max(this.pos.y, ground(this.pos.x, this.pos.z) + 1.2);
     this.shakeT += dt * 40;
     this.shakeAmt = Math.max(0, this.shakeAmt - dt * 2.5);

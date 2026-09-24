@@ -289,6 +289,16 @@ export const ACHIEVEMENTS: Achievement[] = [
   A('dex250', 'Encyclopedia Galactica', 'Log 250 species.', 60, (s) => Object.keys(s.dex).length >= 250),
   A('billion', 'Billionaire Angler', 'Earn $1B in total.', 50, (s) => s.stats.earned >= 1e9),
   A('trillion', 'Trillionaire?!', 'Earn $1T in total.', 150, (s) => s.stats.earned >= 1e12),
+  // shinies, the kraken, blood moons, tournaments and perks
+  A('shiny1', 'Something Sparkly', 'Catch a shiny fish.', 5, (s) => s.stats.shinies >= 1),
+  A('shiny10', 'Shiny Hunter', 'Catch 10 shiny fish.', 15, (s) => s.stats.shinies >= 10),
+  A('shiny25', 'Glitter Collector', 'Log 25 different species as shinies.', 40, (s) => Object.values(s.dex).filter((e) => (e.shiny ?? 0) > 0).length >= 25),
+  A('kraken1', 'Release the Kraken', 'Fight off the Kraken.', 12, (s) => s.stats.krakens >= 1),
+  A('kraken5', 'Calamari Night', 'Fight off the Kraken 5 times.', 30, (s) => s.stats.krakens >= 5),
+  A('bloodmoon', 'Once in a Blood Moon', 'Witness a blood moon.', 4, (s) => s.stats.bloodMoons >= 1),
+  A('tourney1', 'Champion Angler', 'Win a harbor tournament.', 8, (s) => s.stats.tourneyWins >= 1),
+  A('tourney5', 'Undisputed', 'Win 5 harbor tournaments.', 20, (s) => s.stats.tourneyWins >= 5),
+  A('perk5', 'Skilled', 'Learn 5 perk ranks.', 4, (s) => Object.values(s.perks).reduce((a, b) => a + (b ?? 0), 0) >= 5),
 ];
 
 /** Unlocks and pays out any newly met achievements. */

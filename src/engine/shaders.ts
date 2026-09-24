@@ -5,3 +5,5 @@ export { OCEAN } from './wgsl/ocean';
 export { PARTICLES, UNLIT } from './wgsl/misc';
 export { POST } from './wgsl/post';
 export { DETAIL, NOISE3D, WATER_NORMALS } from './wgsl/gen';
+export { VOLUME } from './wgsl/volume';
+export { EXPOSURE, GTAO, GTAO_BLUR, RESOLVE } from './wgsl/screen';

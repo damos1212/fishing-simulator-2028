@@ -29,7 +29,7 @@ export function itemPrice(it: Item, level: number) {
   return nicePrice(LEVEL_VALUE[Math.min(Math.max(level, 0), LEVEL_VALUE.length - 1)] * it.k);
 }
 
-export type CosmeticKind = 'paint' | 'hat' | 'flag' | 'lure' | 'line' | 'pet';
+export type CosmeticKind = 'paint' | 'hat' | 'flag' | 'lure' | 'line' | 'pet' | 'trail';
 
 export interface Cosmetic {
   id: string;
@@ -101,6 +101,14 @@ export const COSMETICS: Cosmetic[] = [
   N('line-blue', 'Sky Blue', 3, '#5ac8ff'),
   N('line-gold', 'Gold Thread', 10, '#ffc93c'),
 
+  { id: 'trail-none', kind: 'trail', name: 'Plain Wake', pearls: 0 },
+  { id: 'trail-bubbles', kind: 'trail', name: 'Bubble Trail', pearls: 6, color: '#bfefff' },
+  { id: 'trail-sparkle', kind: 'trail', name: 'Gold Sparkles', pearls: 10, color: '#ffd23a' },
+  { id: 'trail-ghost', kind: 'trail', name: 'Ghost Wisps', pearls: 12, color: '#60ff9a' },
+  { id: 'trail-rainbow', kind: 'trail', name: 'Rainbow Wake', pearls: 16, colors: ['#ff5a5a', '#5aff7a', '#5a8aff'] },
+  { id: 'trail-stars', kind: 'trail', name: 'Stardust', pearls: 18, color: '#a0b8ff' },
+  { id: 'trail-fire', kind: 'trail', name: 'Afterburner Flames', pearls: 22, color: '#ff7a1a' },
+
   { id: 'pet-none', kind: 'pet', name: 'No Pet', pearls: 0 },
   { id: 'pet-crab', kind: 'pet', name: 'Pinchy the Crab', pearls: 12, mesh: 'PetCrab' },
   { id: 'pet-cat', kind: 'pet', name: 'Mittens the Cat', pearls: 0, mesh: 'PetCat', quest: true },
@@ -112,5 +120,5 @@ export const COSMETICS: Cosmetic[] = [
 
 export const cosmeticById = new Map(COSMETICS.map((c) => [c.id, c]));
 export const DEFAULT_COSMETICS: Record<CosmeticKind, string> = {
-  paint: 'paint-default', hat: 'hat-souwester', flag: 'flag-yellow', lure: 'lure-default', line: 'line-white', pet: 'pet-none',
+  paint: 'paint-default', hat: 'hat-souwester', flag: 'flag-yellow', lure: 'lure-default', line: 'line-white', pet: 'pet-none', trail: 'trail-none',
 };
